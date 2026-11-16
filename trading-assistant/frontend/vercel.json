@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://stock-n9kg.onrender.com/api/:path*"
+    }
+  ]
+}
