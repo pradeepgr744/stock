@@ -223,11 +223,12 @@ class IntradayRiskManager:
                       additional_cost: float = 0.0) -> float:
         self._ist(now)
         key = symbol.strip().upper()
-        position = self.positions.pop(key, None)
+        position = self.positions.get(key)
         if position is None:
             raise KeyError(f"No open position for {key}")
-        if not isfinite(exit_price) or exit_price <= 0 or additional_cost < 0:
-            raise ValueError("exit price must be positive and costs non-negative")
+        if not isfinite(exit_price) or exit_price <= 0 or not isfinite(additional_cost) or additional_cost < 0:
+            raise ValueError("exit price must be positive and costs finite and non-negative")
+        self.positions.pop(key)
         points = exit_price - position.entry_price
         if position.side == "SHORT":
             points = -points
