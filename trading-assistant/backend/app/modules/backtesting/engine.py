@@ -231,7 +231,12 @@ def _simulate_trade(
 ) -> Trade | None:
     if signal_index + 1 >= len(session):
         return None
-    entry_bar = session[signal_index + 1]
+    eligible_session = [bar for bar in session if bar.timestamp.time() <= EXIT_TIME]
+    if signal_index + 1 >= len(eligible_session):
+        return None
+    entry_bar = eligible_session[signal_index + 1]
+    if (entry_bar.timestamp - signal.timestamp).total_seconds() > 5 * 60:
+        return None
     entry = entry_bar.open
     risk_per_share = entry - signal.stop if signal.side == "LONG" else signal.stop - entry
     if risk_per_share <= 0 or risk_per_share / entry * 100 > config.max_risk_pct_of_price:
@@ -239,19 +244,18 @@ def _simulate_trade(
 
     round_trip_bps = costs.buy_cost_bps + costs.sell_cost_bps + 2 * costs.slippage_bps_per_side
     risk_budget = equity * config.risk_pct / 100.0
-    qty_by_risk = math.floor(risk_budget / (risk_per_share + entry * round_trip_bps / 10_000.0))
+    risk_after_fixed_fees = max(0.0, risk_budget - 2 * costs.brokerage_per_order)
+    qty_by_risk = math.floor(risk_after_fixed_fees / (risk_per_share + entry * round_trip_bps / 10_000.0))
     qty_by_cash = math.floor(equity * config.max_entry_notional_pct / 100.0 / entry)
     quantity = min(qty_by_risk, qty_by_cash)
     if quantity < 1:
         return None
 
     target = entry + config.target_r * risk_per_share if signal.side == "LONG" else entry - config.target_r * risk_per_share
-    exit_price = session[-1].close
-    exit_bar = session[-1]
+    exit_price = eligible_session[-1].close
+    exit_bar = eligible_session[-1]
     exit_reason = "EOD"
-    for bar in session[signal_index + 1:]:
-        if bar.timestamp.time() > EXIT_TIME:
-            break
+    for bar in eligible_session[signal_index + 1:]:
         if signal.side == "LONG":
             stop_hit, target_hit = bar.low <= signal.stop, bar.high >= target
             if stop_hit:
@@ -412,4 +416,6 @@ def compare_strategies(bars: list[Bar], config: BacktestConfig, costs: CostModel
 
 
 def write_report(report: dict, output: str | Path) -> None:
-    Path(output).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    destination = Path(output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
