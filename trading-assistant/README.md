@@ -180,3 +180,33 @@ The scanner is manually started from the dashboard or `POST /api/scanner/start`;
 - [Exchange Status](https://upstox.com/developer/api-documentation/get-market-status/)
 - [Market holidays](https://upstox.com/developer/api-documentation/get-market-holidays/)
 - [Market Data Feed V3](https://upstox.com/developer/api-documentation/v3/get-market-data-feed/)
+
+
+## Historical backtesting (new research module)
+
+The backend includes an offline comparison engine for ORB, VWAP pullback, and previous-day liquidity sweep/reclaim. It uses completed 5-minute candles, next-bar-open entries, a stop-first assumption when stop and target are both touched, a ₹50,000 starting balance, 0.5% planned risk, and a maximum of three trades per day. It does not send alerts or place orders.
+
+### Download a current NIFTY 200 sample
+
+The downloader reads the current official NIFTY 200 constituent CSV from [Nifty Indices](https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv), maps symbols through the Upstox instrument master, and downloads 5-minute candles:
+
+```powershell
+cd D:\Projects\stock\trading-assistant\backend
+python scripts\download_nifty200_history.py --from-date 2026-01-01 --to-date 2026-02-28 --output data\nifty200_5m.csv
+```
+
+Upstox V3 limits 1–15 minute historical requests to one month per request. The downloader chunks requests by calendar month and uses sequential requests with a delay. See the [Upstox V3 historical candle documentation](https://upstox.com/developer/api-documentation/v3/get-historical-candle-data/). Historical minute data is documented from January 2022. A large NIFTY 200 multi-year download can take a long time and may be subject to API limits.
+
+Important: the official constituent CSV is today's/current universe. Do not use today's members to claim unbiased results for old periods. For credible multi-year backtests, supply point-in-time historical index membership and include removed/delisted stocks. See [NSE's NIFTY 200 index page](https://www.nseindia.in/static/products-services/indices-nifty200-index).
+
+### Run strategy comparison
+
+```powershell
+python -m app.modules.backtesting.cli --input data\nifty200_5m.csv --strategy all --capital 50000 --risk-pct 0.5 --max-trades-per-day 3 --slippage-bps 5 --brokerage-per-order 20 --buy-cost-bps 1.0 --sell-cost-bps 4.0 --output reports\compare.json
+```
+
+The buy/sell bps in this example are placeholders. Replace them with a calculation from your actual Upstox contract note and applicable statutory charges. Full instructions and limitations are in [docs/BACKTESTING.md](docs/BACKTESTING.md). Run tests with:
+
+```powershell
+python -m unittest discover -s tests -v
+```
