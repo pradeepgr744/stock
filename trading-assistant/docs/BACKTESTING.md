@@ -7,8 +7,8 @@
 - Signals are evaluated only after a completed candle and filled at the next candle open.
 - Conservative same-candle ambiguity: if stop and target are both touched, stop wins.
 - Risk sizing starts at ₹50,000 equity and 0.5% risk (₹250 initial planned risk), capped by available cash notional.
-- Intraday long and short positions are closed by end of session; no overnight short positions.
-- Max three trades per day, one position at a time, and one trade per symbol per day in the initial portfolio simulator.
+- Intraday long and short positions are force-closed using the 15:15 IST bar; no overnight positions are permitted.
+- The backtest engine is still serialized (one position at a time), with a maximum of three trades per day and one trade per symbol per day. The separate portfolio risk gate defines the intended two-position / ₹500 aggregate-risk limits, but is not yet wired into this simulator or the live scanner.
 - Costs include user-supplied buy-side/sell-side statutory and exchange bps, configurable slippage, and capped per-order brokerage.
 - Reports include net P&L, win rate, profit factor, expectancy in rupees and R, max drawdown, and total modeled costs.
 
@@ -49,6 +49,10 @@ The example cost rates are placeholders only, not a statement of current NSE cha
 6. Report sample size and confidence interval for win rate; group results by year, symbol, sector, time-of-day, and market regime.
 7. Compare each strategy with buy-and-hold is not appropriate for intraday; use no-trade and simple benchmark strategies and compare expectancy / drawdown.
 8. Paper trade with live timestamps before any real-money use.
+
+## Intraday risk gate
+
+`app.modules.risk.intraday.IntradayRiskManager` is a broker-agnostic pre-trade gate. Its defaults are ₹250 planned risk per trade, ₹500 aggregate open planned risk, two concurrent positions, three entries per day, and a ₹750 daily loss stop based on realized plus marked unrealized P&L. It rejects new entries after 14:45 IST and requests flattening at 15:15 IST or when the daily loss threshold is breached. The caller must invoke `must_flatten`, send actual broker fills/marks/exits to the manager, and execute the resulting square-off through the broker adapter. It does not place orders and does not protect an account unless integrated with live order and position state. A stop gap or execution delay can exceed planned risk.
 
 ## Known limitations
 
