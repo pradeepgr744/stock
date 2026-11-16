@@ -7,12 +7,12 @@ time-of-day RVOL / regime data. It does not place orders or send alerts.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from math import isfinite
 from typing import Sequence
 
 
-class Regime(StrEnum):
+class Regime(str, Enum):
     BULL = "BULL"
     BEAR = "BEAR"
     RANGE = "RANGE"
