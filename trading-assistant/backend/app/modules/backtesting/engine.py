@@ -374,16 +374,37 @@ def run_backtest(
     gross_loss = abs(sum(trade.net_pnl for trade in losses))
     total_net = sum(trade.net_pnl for trade in trades)
     r_values = [trade.r_multiple for trade in trades]
+    sample_size = len(trades)
+    win_rate = len(wins) / sample_size if sample_size else 0.0
+    # Wilson score interval is more stable than a normal approximation for
+    # small samples; it is still descriptive, not evidence of future returns.
+    if sample_size:
+        z = 1.96
+        denominator = 1 + z * z / sample_size
+        center = (win_rate + z * z / (2 * sample_size)) / denominator
+        margin = z * math.sqrt(
+            win_rate * (1 - win_rate) / sample_size
+            + z * z / (4 * sample_size * sample_size)
+        ) / denominator
+        win_rate_ci95 = [
+            round(max(0.0, center - margin) * 100.0, 2),
+            round(min(1.0, center + margin) * 100.0, 2),
+        ]
+    else:
+        win_rate_ci95 = None
     metrics = {
-        "trades": len(trades),
+        "trades": sample_size,
         "wins": len(wins),
         "losses": len(losses),
-        "win_rate_pct": round(len(wins) / len(trades) * 100.0, 2) if trades else 0.0,
+        "win_rate_pct": round(win_rate * 100.0, 2),
+        "win_rate_95pct_wilson_ci": win_rate_ci95,
         "net_pnl": round(total_net, 2),
         "ending_equity": round(config.initial_capital + total_net, 2),
         "return_pct": round(total_net / config.initial_capital * 100.0, 2),
-        "profit_factor": round(gross_profit / gross_loss, 3) if gross_loss else (None if gross_profit == 0 else "inf"),
-        "expectancy_per_trade": round(total_net / len(trades), 2) if trades else 0.0,
+        "profit_factor": round(gross_profit / gross_loss, 3) if gross_loss else None,
+        "average_win": round(gross_profit / len(wins), 2) if wins else 0.0,
+        "average_loss": round(-gross_loss / len(losses), 2) if losses else 0.0,
+        "expectancy_per_trade": round(total_net / sample_size, 2) if sample_size else 0.0,
         "expectancy_r": round(sum(r_values) / len(r_values), 4) if r_values else 0.0,
         "max_drawdown_pct": round(max_drawdown, 2),
         "total_costs": round(sum(trade.costs for trade in trades), 2),
