@@ -36,6 +36,8 @@ def assess_configured_news(request: NewsAssessmentRequest) -> dict:
         "article_count": len(assessment.articles),
         "state": assessment.state.value,
         "halt_new_entries": assessment.halt_new_entries,
+        "halt_all_symbols": assessment.halt_all_symbols,
+        "blocked_symbols": list(assessment.blocked_symbols),
         "sentiment_score": assessment.sentiment_score,
         "reasons": list(assessment.reasons),
         "articles": [
