@@ -42,9 +42,9 @@ def parse_nifty200_csv(content: str) -> list[str]:
         seen.add(raw)
         symbols.append(raw)
 
-    if not 180 <= len(symbols) <= 200:
+    if len(symbols) != 200:
         raise Nifty200UniverseError(
-            f"Expected 180–200 NIFTY 200 constituents; received {len(symbols)}."
+            f"Expected exactly 200 NIFTY 200 constituents; received {len(symbols)}."
         )
     return symbols
 
