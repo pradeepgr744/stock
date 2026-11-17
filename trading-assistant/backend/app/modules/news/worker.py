@@ -35,6 +35,10 @@ class NewsWorker:
             "last_stored_count": 0,
             "last_errors": [],
             "last_error": None,
+            "assessment_state": "UNKNOWN",
+            "halt_new_entries": True,
+            "halt_all_symbols": True,
+            "blocked_symbols": [],
         }
 
     @property
@@ -106,6 +110,10 @@ class NewsWorker:
                     "last_stored_count": 0,
                     "last_errors": [],
                     "last_error": None,
+                    "assessment_state": "UNAVAILABLE",
+                    "halt_new_entries": True,
+                    "halt_all_symbols": True,
+                    "blocked_symbols": [],
                 }
                 self._update(**result)
                 return result
@@ -175,6 +183,10 @@ class NewsWorker:
                 "last_stored_count": stored_count,
                 "last_errors": errors,
                 "last_error": None,
+                "assessment_state": assessment.state.value,
+                "halt_new_entries": assessment.halt_new_entries or (bool(errors) and not articles),
+                "halt_all_symbols": assessment.halt_all_symbols or (bool(errors) and not articles),
+                "blocked_symbols": list(assessment.blocked_symbols),
             }
             self._update(**result)
             return result
@@ -183,7 +195,9 @@ class NewsWorker:
                 state="ERROR",
                 last_run_at=datetime.now(IST).isoformat(),
                 last_error=type(exc).__name__,
-                message="News ingestion failed; existing stored events were not deleted.",
+                halt_new_entries=True,
+                halt_all_symbols=True,
+                message="News ingestion failed; new signal alerts are paused until coverage recovers.",
             )
             raise
         finally:
