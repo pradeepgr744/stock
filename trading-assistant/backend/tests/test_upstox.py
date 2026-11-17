@@ -156,7 +156,7 @@ class MarketDataRouteTests(unittest.TestCase):
 
     def test_scanner_start_resolves_nifty200_symbols_and_starts_feed(self) -> None:
         client = TestClient(app)
-        symbols = [f"TEST{i}" for i in range(180)]
+        symbols = [f"TEST{i}" for i in range(200)]
         instruments = {
             symbol: Instrument(f"NSE_EQ|{symbol}", symbol, f"{symbol} Ltd", 0.05, 1)
             for symbol in symbols
@@ -182,7 +182,7 @@ class MarketDataRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["running"])
         self.assertEqual(response.json()["universe"], "NIFTY 200")
-        self.assertEqual(response.json()["universe_count"], 180)
+        self.assertEqual(response.json()["universe_count"], 200)
         start.assert_called_once_with(list(instruments.values()))
 
 
