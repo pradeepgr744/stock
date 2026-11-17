@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/multifactor-nse-scanner
+      - feat/intraday-news-risk-engine
   pull_request:
     paths:
       - "trading-assistant/backend/**"
