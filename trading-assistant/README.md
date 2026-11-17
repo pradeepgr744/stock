@@ -210,3 +210,18 @@ The buy/sell bps in this example are placeholders. Replace them with a calculati
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+
+## Intraday decision engine and news-risk research
+
+See [INTRADAY_DECISION_ENGINE.md](docs/INTRADAY_DECISION_ENGINE.md) for the factor pipeline, event handling policy, validation rules, and current implementation limits.
+
+The backend exposes a research-only news assessment endpoint:
+
+~~~powershell
+Invoke-RestMethod -Method Post http://localhost:8000/api/research/news/assess -ContentType 'application/json' -Body '{"symbols":["RELIANCE","TCS"]}'
+~~~
+
+Set NEWS_RSS_FEED_URLS in backend/.env to comma-separated HTTPS RSS/Atom feed URLs copied from official NSE, BSE, RBI, SEBI, PIB or MCA publisher pages. No feed URLs are bundled by default. If feeds are unconfigured or all fail, the endpoint reports news coverage unavailable and fails closed. The endpoint fetches feeds when called; continuous background monitoring and live scanner integration are not implemented yet.
+
+The news sentiment is a transparent keyword baseline, not a prediction model or calibrated probability. Official market-wide disruption events can block all new entries; verified issuer-specific events can block tagged symbols. The current news endpoint is not yet connected to the live scanner or historical backtester. Do not use it as a standalone buy/sell signal.
