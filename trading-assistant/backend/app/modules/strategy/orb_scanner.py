@@ -84,6 +84,8 @@ class OrbScanner:
                 "last_message_at": None,
                 "last_alert_at": None,
                 "last_error": None,
+                "daily_signal_count": self._daily_signal_count,
+                "daily_signal_limit": 3,
             }
             self._thread = threading.Thread(
                 target=self._thread_main,
