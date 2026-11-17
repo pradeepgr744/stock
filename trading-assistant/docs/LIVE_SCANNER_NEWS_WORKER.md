@@ -33,7 +33,7 @@ Endpoints:
 - `GET /api/research/news/worker/status` — worker, coverage and entry-gate status.
 - `POST /api/research/news/worker/run-once` — manually trigger an ingestion cycle.
 - `GET /api/research/news/events?limit=50` — newest persisted events (1–200).
-- `GET /api/research/news/assess` remains separate as the on-demand assessment route.
+- `POST /api/research/news/assess` remains separate as the on-demand assessment route.
 
 If feeds are unconfigured, all feeds fail without usable articles, or ingestion/database access fails, the worker fails closed and pauses new signal alerts. A reachable feed with no fresh articles is reported as EMPTY; it is not treated as proof of an adverse event.
 
