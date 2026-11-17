@@ -33,8 +33,9 @@ NSE describes its RSS feeds as a way to receive corporate information, announcem
 
 ### Event handling
 
-- Fresh official market-wide disruption / high-impact event: set BLOCKED, stop new entries and require human review.
-- Fresh issuer-specific material event: at least CAUTION; block that issuer until the original filing and price reaction are checked.
+- Fresh official market-wide disruption / high-impact event: set BLOCKED, stop all new entries and require human review.
+- Fresh official issuer-specific suspension/default/ban with a tagged symbol: block that symbol only; do not halt unrelated shares.
+- Fresh official issuer-specific material event with a symbol tag: block that symbol until the original filing and price reaction are checked.
 - Third-party headline or unverified social claim: CAUTION only. Confirm with an official filing or a second independent reputable source.
 - Stale or future-dated item: do not score it as fresh news.
 - Conflicting headlines: do not average them into a confident prediction; mark the event ambiguous and require review.
@@ -70,7 +71,8 @@ Report net expectancy, profit factor, max drawdown, daily loss breaches, average
 ## Current implementation status
 
 - Added deterministic news/event assessment and freshness/deduplication.
-- Added official-source domain trust classification and conservative high-impact pause rule.
+- Added official-source domain trust classification, market-wide pause rules, and issuer-specific symbol blocks.
+- News coverage reports UNAVAILABLE and fails closed if no official feeds are configured or all configured feeds fail.
 - Added an RSS/Atom fetcher restricted to HTTPS feeds on the official NSE/BSE/SEBI/RBI/PIB/MCA allowlist.
 - Added POST /api/research/news/assess and NEWS_RSS_FEED_URLS.
 - Added unit tests for official vs unverified sources, freshness, duplicate URLs, future timestamps, and basic sentiment.
