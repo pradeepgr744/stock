@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 IST = ZoneInfo("Asia/Kolkata")
 ENTRY_START = time(9, 30)
 ENTRY_CUTOFF = time(14, 45)
-EXIT_TIME = time(15, 25)
+EXIT_TIME = time(15, 15)
 
 
 @dataclass(frozen=True)
