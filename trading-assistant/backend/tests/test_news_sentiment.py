@@ -17,7 +17,7 @@ class NewsRiskTests(unittest.TestCase):
 
     def test_official_fresh_market_disruption_blocks_new_entries(self):
         result = assess_news(
-            [self.article("NSE trading suspension announced")],
+            [self.article("NSE exchange outage announced")],
             as_of=NOW, relevant_symbols=["RELIANCE"],
         )
         self.assertEqual(result.state, NewsState.BLOCKED)
