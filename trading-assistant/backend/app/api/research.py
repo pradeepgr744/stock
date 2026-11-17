@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..config import settings
 from ..modules.news.sentiment import assess_news, fetch_rss_articles
@@ -14,6 +14,13 @@ IST = ZoneInfo("Asia/Kolkata")
 class NewsAssessmentRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list, max_length=200)
     as_of: datetime | None = None
+
+    @field_validator("as_of")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("as_of must include a timezone")
+        return value
 
 
 @router.post("/news/assess")
@@ -30,16 +37,23 @@ def assess_configured_news(request: NewsAssessmentRequest) -> dict:
         as_of=request.as_of or datetime.now(IST),
         relevant_symbols=request.symbols,
     )
+    coverage_block = not urls or (bool(errors) and not articles)
+    reasons = list(assessment.reasons)
+    if not urls:
+        reasons.append("No official news feeds configured; news coverage is unavailable")
+    elif errors and not articles:
+        reasons.append("All configured news feeds failed; news coverage is unavailable")
     return {
-        "status": "partial" if errors else "ok",
+        "status": "unconfigured" if not urls else "unavailable" if coverage_block else "partial" if errors else "ok",
+        "coverage_status": "UNAVAILABLE" if coverage_block else "PARTIAL" if errors else "AVAILABLE",
         "feed_count": len(urls),
         "article_count": len(assessment.articles),
-        "state": assessment.state.value,
-        "halt_new_entries": assessment.halt_new_entries,
-        "halt_all_symbols": assessment.halt_all_symbols,
+        "state": "BLOCKED" if coverage_block else assessment.state.value,
+        "halt_new_entries": assessment.halt_new_entries or coverage_block,
+        "halt_all_symbols": assessment.halt_all_symbols or coverage_block,
         "blocked_symbols": list(assessment.blocked_symbols),
         "sentiment_score": assessment.sentiment_score,
-        "reasons": list(assessment.reasons),
+        "reasons": reasons,
         "articles": [
             {
                 "article_id": item.article_id,
