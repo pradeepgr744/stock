@@ -2,7 +2,7 @@
 
 ## Live market scanner
 
-The scanner resolves the current NIFTY 200 constituent CSV from the Nifty Indices site, then intersects it with the NSE equity instrument master downloaded from Upstox. The scanner refuses to start if fewer than 180 constituents resolve. The constituent list is cached in memory for 12 hours; use `GET /api/universe/nifty200?refresh=true` to force a refresh.
+The scanner resolves the current NIFTY 200 constituent CSV from the Nifty Indices site, then intersects it with the NSE equity instrument master downloaded from Upstox. It will not silently call a partial list the NIFTY 200. The scanner refuses to start unless all 200 constituents resolve. The constituent list is cached in memory for 12 hours; use `GET /api/universe/nifty200?refresh=true` to force a refresh.
 
 The Upstox Market Data Feed V3 websocket is subscribed in full mode for the resolved symbols. It evaluates completed one-minute bars and emits:
 
