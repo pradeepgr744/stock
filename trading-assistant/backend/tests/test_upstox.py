@@ -2,7 +2,7 @@ import gzip
 import json
 import unittest
 from datetime import date
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -154,19 +154,22 @@ class MarketDataRouteTests(unittest.TestCase):
         self.assertIn("connection", response.json())
         self.assertIn("last_message_at", response.json())
 
-    def test_scanner_start_resolves_symbols_and_starts_feed(self) -> None:
+    def test_scanner_start_resolves_nifty200_symbols_and_starts_feed(self) -> None:
         client = TestClient(app)
-        instrument = Instrument("NSE_EQ|TEST", "TEST", "Test Ltd", 0.05, 1)
+        symbols = [f"TEST{i}" for i in range(200)]
+        instruments = {
+            symbol: Instrument(f"NSE_EQ|{symbol}", symbol, f"{symbol} Ltd", 0.05, 1)
+            for symbol in symbols
+        }
 
         with (
-            patch("app.modules.strategy.orb_scanner.settings.upstox_access_token", "token"),
-            patch("app.modules.strategy.orb_scanner.settings.telegram_bot_token", "bot-token"),
-            patch("app.modules.strategy.orb_scanner.settings.telegram_chat_id", "chat-id"),
-            patch("app.api.market_data.settings.orb_scanner_symbols", "TEST"),
-            patch("app.api.market_data.upstox_client.refresh_nse_equities", return_value=1),
+            patch("app.modules.market_data.upstox.UpstoxClient.configured", new_callable=PropertyMock, return_value=True),
+            patch("app.modules.notifications.telegram.TelegramNotifier.configured", new_callable=PropertyMock, return_value=True),
+            patch("app.api.market_data.load_nifty200_symbols", return_value=symbols),
+            patch("app.api.market_data.upstox_client.refresh_nse_equities", return_value=2000),
             patch(
                 "app.api.market_data.upstox_client.get_nse_equities_by_symbols",
-                return_value={"TEST": instrument},
+                return_value=instruments,
             ),
             patch(
                 "app.api.market_data.orb_scanner.start",
@@ -175,9 +178,11 @@ class MarketDataRouteTests(unittest.TestCase):
         ):
             response = client.post("/api/scanner/start")
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.json()["running"])
-        start.assert_called_once_with([instrument])
+        self.assertEqual(response.json()["universe"], "NIFTY 200")
+        self.assertEqual(response.json()["universe_count"], 200)
+        start.assert_called_once_with(list(instruments.values()))
 
 
 class TelegramNotifierTests(unittest.TestCase):
