@@ -16,10 +16,45 @@ type ScannerStatus = {
   running: boolean
   connection: string
   message: string
+  universe?: string
+  symbol_count?: number
+  daily_signal_count?: number
+  daily_signal_limit?: number
   symbols: string[]
   last_message_at: string | null
   last_alert_at: string | null
   last_error: string | null
+}
+type NewsWorkerStatus = {
+  running: boolean
+  state: string
+  message: string
+  feed_count: number
+  last_run_at: string | null
+  last_success_at: string | null
+  last_article_count: number
+  last_stored_count: number
+  last_errors: string[]
+  last_error: string | null
+  assessment_state: string
+  halt_new_entries: boolean
+  halt_all_symbols: boolean
+  blocked_symbols: string[]
+}
+type NewsEvent = {
+  article_id: string
+  title: string
+  source: string
+  url: string
+  published_at: string
+  fetched_at: string
+  symbols: string[]
+  sentiment_score: number
+  sentiment_label: string
+  event_severity: number
+  source_trust: string
+  event_level: string
+  reasons: string[]
 }
 type NewsArticle = {
   article_id: string
@@ -52,6 +87,7 @@ type DashboardStatus = {
   health: HealthResponse
   integrations: IntegrationStatus
   scanner: ScannerStatus
+  newsWorker: NewsWorkerStatus
 }
 
 const SAMPLE_TRADE_HINT = {
@@ -66,12 +102,13 @@ const SAMPLE_TRADE_HINT = {
 }
 
 async function fetchStatus(): Promise<DashboardStatus> {
-  const [health, integrations, scanner] = await Promise.all([
+  const [health, integrations, scanner, newsWorker] = await Promise.all([
     axios.get<HealthResponse>('/api/health'),
     axios.get<IntegrationStatus>('/api/integrations/status'),
     axios.get<ScannerStatus>('/api/scanner/status'),
+    axios.get<NewsWorkerStatus>('/api/research/news/worker/status'),
   ])
-  return { health: health.data, integrations: integrations.data, scanner: scanner.data }
+  return { health: health.data, integrations: integrations.data, scanner: scanner.data, newsWorker: newsWorker.data }
 }
 const timeLabel = (value?: string | null) => value ? new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'Not received yet'
 const errorMessage = (error: unknown) => axios.isAxiosError(error)
@@ -105,6 +142,19 @@ function App() {
   const news = useMutation({
     mutationFn: () => axios.post<NewsAssessment>('/api/research/news/assess', { symbols: [] }).then(r => r.data),
   })
+  const events = useQuery({
+    queryKey: ['news-events'],
+    queryFn: () => axios.get<NewsEvent[]>('/api/research/news/events?limit=50').then(r => r.data),
+    refetchInterval: 30000,
+    retry: 1,
+  })
+  const runNewsWorker = useMutation({
+    mutationFn: () => axios.post<NewsWorkerStatus>('/api/research/news/worker/run-once').then(r => r.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard-status'] })
+      queryClient.invalidateQueries({ queryKey: ['news-events'] })
+    },
+  })
   const startScanner = useMutation({
     mutationFn: () => axios.post('/api/scanner/start'),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dashboard-status'] }),
@@ -124,8 +174,8 @@ function App() {
     { name: 'Upstox credentials', state: upstoxReady ? 'Configured' : 'Missing', done: upstoxReady },
     { name: 'Upstox live stream', state: scanner?.connection ?? 'Not started', done: scanner?.connection === 'connected' },
     { name: 'Telegram bot', state: telegramReady ? 'Configured' : 'Missing', done: telegramReady },
-    { name: 'News RSS assessment', state: news.data?.coverage_status ?? 'Not checked', done: news.data?.coverage_status === 'AVAILABLE' },
-  ], [health, upstoxReady, scanner, telegramReady, news.data])
+    { name: 'Background news worker', state: data?.newsWorker.state ?? 'Unknown', done: Boolean(data?.newsWorker.running && !data.newsWorker.halt_new_entries) },
+  ], [health, upstoxReady, scanner, telegramReady, data?.newsWorker])
 
   return <main className="min-h-screen bg-[#080d13] text-slate-200">
     <div className="mx-auto max-w-[1440px] px-4 py-5 sm:px-7 lg:px-10">
@@ -151,7 +201,7 @@ function App() {
           <Metric label="Backend API" value={isLoading ? 'Checking' : health?.status ?? 'Unavailable'} detail={health?.environment ?? 'Waiting for response'} tone={health?.status === 'ok' ? 'good' : 'bad'} />
           <Metric label="Database" value={health?.database?.status ?? 'Unknown'} detail="Connection health only" tone={health?.database?.status === 'connected' ? 'good' : 'warn'} />
           <Metric label="Market feed" value={scanner?.connection ?? 'Not started'} detail={scanner?.running ? 'Scanner process running' : 'Live scanner stopped'} tone={scanner?.connection === 'connected' ? 'good' : 'warn'} />
-          <Metric label="News entry gate" value={news.data?.coverage_status === 'UNAVAILABLE' ? 'FEED UNAVAILABLE' : news.data?.state ?? 'Not checked'} detail={news.data?.coverage_status === 'UNAVAILABLE' ? 'Entries paused because no usable news source is available' : news.data?.coverage_status ?? 'Run assessment to check feeds'} tone={news.data?.coverage_status === 'UNAVAILABLE' || news.data?.state === 'BLOCKED' ? 'bad' : news.data?.state === 'CAUTION' ? 'warn' : 'neutral'} />
+          <Metric label="News entry gate" value={data?.newsWorker.halt_new_entries ? 'PAUSED' : data?.newsWorker.state ?? 'Checking'} detail={data?.newsWorker.message ?? 'Waiting for background worker'} tone={data?.newsWorker.halt_new_entries ? 'bad' : data?.newsWorker.state === 'PARTIAL' ? 'warn' : 'good'} />
         </section>
 
         {error && <div className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/[.06] p-4 text-sm text-rose-300">Backend request failed: {errorMessage(error)}. Check VITE API proxy / backend URL.</div>}
@@ -159,7 +209,7 @@ function App() {
         <section className="grid gap-4 xl:grid-cols-[1.55fr_1fr]">
           <div className="rounded-2xl border border-white/[.08] bg-[#0e151e] p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div><SectionTitle eyebrow="Execution monitor" title="Live ORB scanner" note="Existing live implementation · configured symbols are currently NIFTY 50 defaults, not the full NIFTY 200 universe." />
+              <div><SectionTitle eyebrow="Execution monitor" title="Live NIFTY 200 scanner" note="Live ORB + VWAP reclaim + 20-minute liquidity sweep/reclaim signals from completed one-minute bars." />
                 <div className="flex items-center gap-2 text-sm"><StatusDot active={scanner?.connection === 'connected'} warning={scanner?.running && scanner?.connection !== 'connected'} /><span className="font-medium text-white">{scanner?.message ?? 'Waiting for backend status'}</span></div>
               </div>
               <div className="flex gap-2">
@@ -168,14 +218,14 @@ function App() {
               </div>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <Metric label="Symbols subscribed" value={String(scanner?.symbols?.length ?? 0)} detail="Resolved at scanner start" />
+              <Metric label="Symbols subscribed" value={String(scanner?.symbol_count ?? scanner?.symbols?.length ?? 0)} detail={scanner?.universe ?? 'NIFTY 200 universe'} />
               <Metric label="Last feed message" value={scanner?.last_message_at ? timeLabel(scanner.last_message_at) : 'No message'} detail="Timestamp from scanner process" />
-              <Metric label="Last alert" value={timeLabel(scanner?.last_alert_at)} detail="Telegram alert timestamp" />
+              <Metric label="Daily candidate alerts" value={`${scanner?.daily_signal_count ?? 0} / ${scanner?.daily_signal_limit ?? 3}`} detail="Maximum candidate alerts per IST day" />
             </div>
             {scanner?.last_error && <p className="mt-3 rounded-lg bg-rose-500/[.07] p-3 text-xs text-rose-300">Scanner error: {scanner.last_error}</p>}
             {startScanner.error && <p className="mt-3 text-xs text-rose-300">Start failed: {errorMessage(startScanner.error)}</p>}
             {stopScanner.error && <p className="mt-3 text-xs text-rose-300">Stop failed: {errorMessage(stopScanner.error)}</p>}
-            <div className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[.05] p-3 text-xs leading-5 text-amber-200/80">Scanner currently evaluates the opening-range breakout rule only. It does not yet enforce the portfolio risk module, use the news assessment as an entry gate, or create an order. A connected feed is not proof that a valid setup exists.</div>
+            <div className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[.05] p-3 text-xs leading-5 text-amber-200/80">Signals are alert-only. The scanner applies a news safety gate, a three-candidate daily cap and indicative quantity sizing from the ₹250 planned risk budget. It cannot know manually opened positions or realized P&amp;L, and it never submits orders. Scores are not win probabilities.</div>
           </div>
 
           <div className="rounded-2xl border border-white/[.08] bg-[#0e151e] p-5">
@@ -196,9 +246,12 @@ function App() {
           <div className="rounded-2xl border border-white/[.08] bg-[#0e151e] p-5">
             <SectionTitle eyebrow="Manual operations" title="Notifications & news check" note="Actions call the existing backend endpoints; no trades are submitted." />
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => news.mutate()} disabled={news.isPending} className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-300 disabled:opacity-50">{news.isPending ? 'Checking feeds…' : 'Run news assessment'}</button>
+              <button onClick={() => runNewsWorker.mutate()} disabled={runNewsWorker.isPending} className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-300 disabled:opacity-50">{runNewsWorker.isPending ? 'Ingesting…' : 'Run background ingestion now'}</button>
+              <button onClick={() => news.mutate()} disabled={news.isPending} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 disabled:opacity-50">{news.isPending ? 'Checking feeds…' : 'Run news assessment'}</button>
               <button onClick={() => telegram.mutate()} disabled={!telegramReady || telegram.isPending} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 disabled:opacity-40">{telegram.isPending ? 'Sending…' : 'Send demo Telegram alert'}</button>
             </div>
+            <p className="mt-3 text-xs text-slate-500">Worker: {data?.newsWorker.state ?? 'Unknown'} · Last run: {timeLabel(data?.newsWorker.last_run_at)} · Stored events: {data?.newsWorker.last_stored_count ?? 0} new this cycle</p>
+            {runNewsWorker.error && <p className="mt-2 text-xs text-rose-300">Worker failed: {errorMessage(runNewsWorker.error)}</p>}
             {news.error && <p className="mt-3 text-xs text-rose-300">News check failed: {errorMessage(news.error)}</p>}
             {telegram.error && <p className="mt-3 text-xs text-rose-300">Telegram failed: {errorMessage(telegram.error)}</p>}
             {telegram.data && <p className="mt-3 text-xs text-emerald-300">Demo alert sent by backend.</p>}
@@ -209,18 +262,22 @@ function App() {
         <section className="mt-4 rounded-2xl border border-white/[.08] bg-[#0e151e] p-5">
           <SectionTitle eyebrow="Transparency" title="What is not live yet" />
           <div className="grid gap-3 text-xs leading-5 text-slate-400 sm:grid-cols-2 xl:grid-cols-4">
-            <p className="rounded-lg bg-white/[.025] p-3"><b className="text-slate-200">NIFTY 200 scanner</b><br />Current live scanner defaults to a NIFTY 50 list.</p>
+            <p className="rounded-lg bg-white/[.025] p-3"><b className="text-slate-200">Signal quality</b><br />Rule scores, relative volume and risk-distance filters are not validated win probabilities.</p>
             <p className="rounded-lg bg-white/[.025] p-3"><b className="text-slate-200">Trade candidates table</b><br />No candidate history/list API is currently exposed.</p>
             <p className="rounded-lg bg-white/[.025] p-3"><b className="text-slate-200">Portfolio risk</b><br />Risk module is not wired to broker positions or scanner entries.</p>
-            <p className="rounded-lg bg-white/[.025] p-3"><b className="text-slate-200">News monitoring</b><br />News is fetched only when you click assess; no background worker or persistence.</p>
+            <p className="rounded-lg bg-white/[.025] p-3"><b className="text-slate-200">Portfolio risk</b><br />Manual positions and realized P&amp;L are not connected, so open-position and daily-loss enforcement remain unavailable.</p>
           </div>
         </section>
       </>}
 
       {activeTab === 'news' && <section className="py-5">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><SectionTitle eyebrow="Catalyst monitor" title="News & event risk" note="On-demand RSS assessment. Not a real-time news terminal or directional predictor." /></div><button onClick={() => news.mutate()} disabled={news.isPending} className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-bold text-slate-950 disabled:opacity-50">{news.isPending ? 'Fetching official feeds…' : 'Refresh news assessment'}</button></div>
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><SectionTitle eyebrow="Catalyst monitor" title="News & event risk" note="Scheduled RSS ingestion, persisted events and a separate on-demand assessment. Not a complete real-time news terminal." /></div><div className="flex flex-wrap gap-2"><button onClick={() => runNewsWorker.mutate()} disabled={runNewsWorker.isPending} className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-300 disabled:opacity-50">{runNewsWorker.isPending ? 'Ingesting…' : 'Run ingestion now'}</button><button onClick={() => news.mutate()} disabled={news.isPending} className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-bold text-slate-950 disabled:opacity-50">{news.isPending ? 'Fetching official feeds…' : 'Run assessment'}</button></div></div>
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Worker" value={data?.newsWorker.state ?? 'Unknown'} detail={data?.newsWorker.message ?? 'Waiting'} tone={data?.newsWorker.halt_new_entries ? 'bad' : 'good'} /><Metric label="Last successful run" value={timeLabel(data?.newsWorker.last_success_at)} detail={`${data?.newsWorker.feed_count ?? 0} configured feeds`} /><Metric label="Fresh articles" value={String(data?.newsWorker.last_article_count ?? 0)} detail="Latest ingestion cycle" /><Metric label="Entry safety gate" value={data?.newsWorker.halt_new_entries ? 'PAUSED' : 'CLEAR'} detail={data?.newsWorker.halt_all_symbols ? 'All symbols paused' : data?.newsWorker.blocked_symbols.join(', ') || 'No symbol blocks'} tone={data?.newsWorker.halt_new_entries ? 'bad' : 'good'} /></div>
+        {runNewsWorker.error && <div className="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/[.06] p-4 text-sm text-rose-300">{errorMessage(runNewsWorker.error)}</div>}
+        {events.error && <div className="mb-3 rounded-xl border border-rose-500/20 bg-rose-500/[.06] p-4 text-sm text-rose-300">Could not load stored events: {errorMessage(events.error)}</div>}
         {news.error && <div className="rounded-xl border border-rose-500/20 bg-rose-500/[.06] p-4 text-sm text-rose-300">{errorMessage(news.error)}</div>}
         {!news.data && !news.isPending && <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center"><p className="text-sm text-slate-300">No news assessment has been run in this session.</p><p className="mt-2 text-xs text-slate-500">Run assessment to fetch configured RSS/Atom feeds through the backend.</p></div>}
+        <div className="mt-4 overflow-hidden rounded-2xl border border-white/[.08] bg-[#0e151e]"><div className="border-b border-white/[.07] p-4"><h3 className="text-sm font-semibold text-white">Persisted news events</h3><p className="mt-1 text-xs text-slate-500">Newest events stored by the background worker; refreshes every 30 seconds.</p></div>{!events.data?.length ? <p className="p-6 text-sm text-slate-500">No persisted news events yet. Check worker status and configured feeds.</p> : <div className="divide-y divide-white/[.06]">{events.data.map(event => <article key={event.article_id} className="p-4"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-slate-700/50 px-2 py-1 text-[10px] text-slate-300">{event.source}</span><span className="text-[10px] text-slate-500">{timeLabel(event.published_at)}</span><span className="text-[10px] text-cyan-300">{event.event_level}</span><span className="text-[10px] text-slate-500">{event.source_trust}</span></div><a href={event.url} target="_blank" rel="noreferrer" className="mt-2 block text-sm font-medium text-slate-100 hover:text-cyan-300">{event.title}</a><p className="mt-1 text-xs text-slate-500">{event.sentiment_label} · score {event.sentiment_score} · {event.symbols.join(', ') || 'No symbol tag'}</p>{event.reasons.map((reason, i) => <p key={i} className="mt-1 text-xs text-slate-500">{reason}</p>)}</article>)}</div>}</div>
         {news.data && <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Coverage" value={news.data.coverage_status} detail={`${news.data.feed_count} configured feeds`} tone={news.data.coverage_status === 'AVAILABLE' ? 'good' : 'warn'} /><Metric label="Entry gate" value={news.data.coverage_status === 'UNAVAILABLE' ? 'FEED UNAVAILABLE' : news.data.state} detail={news.data.coverage_status === 'UNAVAILABLE' ? 'Fail-closed safety pause; not a detected market event' : news.data.halt_new_entries ? 'New entries paused by event assessment' : 'No hard pause returned'} tone={news.data.coverage_status === 'UNAVAILABLE' || news.data.state === 'BLOCKED' ? 'bad' : news.data.state === 'CAUTION' ? 'warn' : 'neutral'} /><Metric label="Articles" value={String(news.data.article_count)} detail="After freshness and deduplication" /><Metric label="Blocked symbols" value={news.data.blocked_symbols.join(', ') || 'None'} detail={news.data.coverage_status === 'UNAVAILABLE' ? 'All new entries paused: feed unavailable' : news.data.halt_all_symbols ? 'All symbols paused by market event' : 'Issuer-specific blocks'} /></div>
           {news.data.reasons.length > 0 && <div className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[.05] p-4"><p className="text-xs font-semibold text-amber-200">Assessment reasons</p>{news.data.reasons.map((reason, i) => <p key={i} className="mt-2 text-xs text-amber-100/70">{reason}</p>)}</div>}
@@ -242,7 +299,7 @@ function App() {
           <div className="rounded-xl border border-amber-400/20 bg-amber-400/[.035] p-4"><p className="text-xs font-semibold text-amber-300">NOT YET CONNECTED</p><p className="mt-2 text-xs leading-5 text-slate-400">News assessment → live scanner gate · portfolio risk → positions/orders · persistent event/trade ledger · multi-position portfolio backtest · NIFTY 200 universe.</p></div>
         </div>
         <div className="rounded-2xl border border-white/[.08] bg-[#0e151e] p-5"><h3 className="text-sm font-semibold text-white">Backend capability matrix</h3><div className="mt-4 grid gap-2 sm:grid-cols-2">{[
-          ['Health & database connectivity','Implemented'],['Upstox credentials presence check','Implemented'],['LTP / full quote / candles / market status','Implemented'],['Instrument master refresh & search','Implemented'],['Live ORB WebSocket scanner','Implemented · NIFTY 50 defaults'],['Telegram test / scanner alerts','Implemented'],['News RSS assessment endpoint','Implemented · on demand'],['Intraday risk rules','Research module only'],['ORB + VWAP + sweep/reclaim live signals','ORB only'],['NIFTY 200 scanner','Not implemented'],['Background news worker & event storage','Not implemented'],['Risk enforcement on live positions','Not implemented'],['Automatic order placement','Intentionally disabled'],
+          ['Health & database connectivity','Implemented'],['Upstox credentials presence check','Implemented'],['LTP / full quote / candles / market status','Implemented'],['Instrument master refresh & search','Implemented'],['Live ORB + VWAP + sweep/reclaim WebSocket scanner','Implemented · NIFTY 200'],['Telegram test / scanner alerts','Implemented'],['Background news worker + event storage','Implemented · PostgreSQL'],['Intraday risk rules','Research module only'],['ORB + VWAP + sweep/reclaim live signals','Implemented · alert only'],['NIFTY 200 scanner','Implemented · official constituent CSV'],['Risk enforcement on live positions','Not implemented'],['Automatic order placement','Intentionally disabled'],
         ].map(([name,state]) => <div key={name} className="flex items-center justify-between gap-3 rounded-lg bg-white/[.025] px-3 py-2"><span className="text-xs text-slate-400">{name}</span><span className={`shrink-0 text-[10px] ${state.startsWith('Implemented') ? 'text-emerald-300' : state === 'Research module only' ? 'text-amber-300' : 'text-slate-500'}`}>{state}</span></div>)}</div></div>
       </section>}
 
