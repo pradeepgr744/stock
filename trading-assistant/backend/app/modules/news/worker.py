@@ -47,17 +47,17 @@ class NewsWorker:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop_event.clear()
+            self._status.update(
+                running=True,
+                state="STARTING",
+                message="Background news worker started.",
+            )
             self._thread = threading.Thread(
                 target=self._loop,
                 name="news-rss-worker",
                 daemon=True,
             )
             self._thread.start()
-            self._status.update(
-                running=True,
-                state="STARTING",
-                message="Background news worker started.",
-            )
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -153,6 +153,7 @@ class NewsWorker:
             state = (
                 "UNAVAILABLE" if errors and not articles
                 else "PARTIAL" if errors
+                else "EMPTY" if not assessment.articles
                 else "AVAILABLE"
             )
             result = {
@@ -164,6 +165,8 @@ class NewsWorker:
                     else "News ingestion completed with feed errors."
                     if state == "PARTIAL"
                     else "All configured feeds failed; news coverage is unavailable."
+                    if state == "UNAVAILABLE"
+                    else "Feeds were reachable, but no fresh usable articles were found."
                 ),
                 "feed_count": len(urls),
                 "last_run_at": now.isoformat(),
