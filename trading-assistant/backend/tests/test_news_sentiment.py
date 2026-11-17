@@ -22,6 +22,16 @@ class NewsRiskTests(unittest.TestCase):
         )
         self.assertEqual(result.state, NewsState.BLOCKED)
         self.assertTrue(result.halt_new_entries)
+        self.assertTrue(result.halt_all_symbols)
+
+    def test_issuer_default_blocks_only_tagged_symbol(self):
+        result = assess_news(
+            [self.article("Company default reported", symbols=("RELIANCE",))],
+            as_of=NOW, relevant_symbols=["RELIANCE", "TCS"],
+        )
+        self.assertEqual(result.state, NewsState.BLOCKED)
+        self.assertFalse(result.halt_all_symbols)
+        self.assertEqual(result.blocked_symbols, ("RELIANCE",))
 
     def test_unverified_high_impact_claim_does_not_hard_block(self):
         result = assess_news(
