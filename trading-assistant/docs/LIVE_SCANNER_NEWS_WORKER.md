@@ -10,7 +10,7 @@ The Upstox Market Data Feed V3 websocket is subscribed in full mode for the reso
 - **VWAP reclaim:** a completed candle crosses and holds session VWAP with relative-volume and trend/body confirmation.
 - **Liquidity sweep/reclaim:** a completed candle sweeps the previous 20 one-minute-bar high/low, closes back through that level, and is on the correct side of session VWAP.
 
-The VWAP and sweep/reclaim evaluator requires at least 1.5x recent one-minute relative volume, uses a simple recent-close trend check and candle-body confirmation, rejects stop distances above 1.2%, and targets an illustrative 2R. Entries are restricted to 09:30–14:45 IST. ORB stop distance is also capped at 1.2%.
+The VWAP and sweep/reclaim evaluator requires at least 1.5x recent one-minute relative volume, uses a simple recent-close trend check and candle-body confirmation, rejects stop distances above 1.2%, and targets an illustrative 2R. Entries are restricted to 09:30–14:45 IST. ORB stop distance is also capped at 1.2%. Alert quantity is sized against the ₹250 per-trade risk budget and ₹50,000 notional capital cap; the displayed planned risk excludes transaction costs and is not a guaranteed maximum loss.
 
 These are transparent rule filters, not trained probabilities. The score displayed in Telegram is not a win-rate estimate. No broker orders are submitted.
 
