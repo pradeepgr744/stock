@@ -18,6 +18,7 @@ from ...config import settings
 from ..market_data.upstox import Instrument, upstox_client
 from ..notifications.telegram import TelegramError, telegram_notifier
 from .orb import OpeningRangeBreakout
+from .vwap_sweep import VwapSweepReclaim
 
 logger = logging.getLogger(__name__)
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -120,6 +121,7 @@ class OrbScanner:
 
     async def _run(self, keys_to_symbols: dict[str, str]) -> None:
         evaluator = OpeningRangeBreakout()
+        vwap_sweep_evaluator = VwapSweepReclaim()
         subscription = {
             "guid": str(uuid4()),
             "method": "sub",
@@ -145,7 +147,7 @@ class OrbScanner:
                     await websocket.send(json.dumps(subscription).encode("utf-8"))
                     self._update_status(
                         connection="connected",
-                        message="Connected; scanning live NIFTY 50 market data.",
+                        message="Connected; scanning live NIFTY 200 market data for ORB, VWAP and sweep/reclaim setups.",
                         last_error=None,
                     )
                     delay = 1
@@ -159,7 +161,7 @@ class OrbScanner:
                             raise OrbScannerError("Upstox sent a non-binary market feed message.")
                         decoded = MarketDataFeedV3_pb2.FeedResponse.FromString(message)
                         payload = MessageToDict(decoded)
-                        await self._process_payload(payload, keys_to_symbols, evaluator)
+                        await self._process_payload(payload, keys_to_symbols, evaluator, vwap_sweep_evaluator)
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -186,6 +188,7 @@ class OrbScanner:
         payload: dict[str, Any],
         keys_to_symbols: dict[str, str],
         evaluator: OpeningRangeBreakout,
+        vwap_sweep_evaluator: VwapSweepReclaim,
     ) -> None:
         self._update_status(last_message_at=datetime.now(MARKET_TIMEZONE).isoformat())
         feeds = payload.get("feeds", {})
@@ -200,22 +203,31 @@ class OrbScanner:
             market_feed = full_feed.get("marketFF") if isinstance(full_feed, dict) else None
             if symbol is None or not isinstance(market_feed, dict):
                 continue
-            for candidate in evaluator.on_feed(symbol, market_feed):
+            candidates = [
+                (candidate, "Opening Range Breakout (ORB), completed 5-minute confirmation", 70, None, None)
+                for candidate in evaluator.on_feed(symbol, market_feed)
+            ]
+            candidates.extend(
+                (candidate, candidate.strategy, candidate.quality_score, candidate.vwap, candidate.rvol)
+                for candidate in vwap_sweep_evaluator.on_feed(symbol, market_feed)
+            )
+            for candidate, strategy, quality_score, vwap, rvol in candidates:
+                hint = {
+                    "symbol": candidate.symbol,
+                    "strategy": strategy,
+                    "direction": candidate.direction,
+                    "entry": candidate.entry,
+                    "stop_loss": candidate.stop_loss,
+                    "target": candidate.target,
+                    "quality_score": quality_score,
+                    "vwap": vwap,
+                    "rvol": rvol,
+                    "reason": candidate.reason,
+                    "live_scan": True,
+                    "detected_at": candidate.timestamp.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                }
                 try:
-                    await asyncio.to_thread(
-                        telegram_notifier.send_hint,
-                        {
-                            "symbol": candidate.symbol,
-                            "strategy": "Opening Range Breakout (ORB), 5-minute confirmation",
-                            "direction": candidate.direction,
-                            "entry": candidate.entry,
-                            "stop_loss": candidate.stop_loss,
-                            "target": candidate.target,
-                            "reason": candidate.reason,
-                            "live_scan": True,
-                            "detected_at": candidate.timestamp.strftime("%Y-%m-%d %H:%M:%S %Z"),
-                        },
-                    )
+                    await asyncio.to_thread(telegram_notifier.send_hint, hint)
                 except TelegramError as error:
                     logger.error("Telegram alert failed for %s: %s", candidate.symbol, error)
                     self._update_status(
@@ -225,7 +237,7 @@ class OrbScanner:
                     self._update_status(
                         last_alert_at=datetime.now(MARKET_TIMEZONE).isoformat(),
                         last_error=None,
-                        message=f"Telegram ORB candidate sent for {candidate.symbol}.",
+                        message=f"Telegram {strategy} candidate sent for {candidate.symbol}.",
                     )
 
     def _update_status(self, **updates: Any) -> None:
