@@ -68,7 +68,7 @@ def start_scanner() -> dict[str, Any]:
         symbols = load_nifty200_symbols()
     except Nifty200UniverseError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    if len(symbols) < 180:
+    if len(symbols) != 200:
         raise HTTPException(status_code=503, detail="NIFTY 200 constituent list is incomplete.")
     if not upstox_client.configured:
         raise HTTPException(status_code=503, detail="Upstox access token is not configured.")
@@ -82,10 +82,10 @@ def start_scanner() -> dict[str, Any]:
         _raise_upstox_error(error)
 
     missing = sorted(set(symbols) - set(resolved))
-    if len(resolved) < 180:
+    if len(resolved) != 200:
         raise HTTPException(
             status_code=409,
-            detail=f"Only {len(resolved)} of {len(symbols)} NIFTY 200 symbols resolved; refusing to start an incomplete scanner.",
+            detail=f"Only {len(resolved)} of 200 NIFTY 200 symbols resolved; refusing to start an incomplete scanner.",
         )
     try:
         result = orb_scanner.start(list(resolved.values()))
