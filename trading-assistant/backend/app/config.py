@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     upstox_request_timeout_seconds: float = 10.0
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    news_rss_feed_urls: str = ""
     orb_scanner_symbols: str = (
         "ADANIENT,ADANIPORTS,APOLLOHOSP,ASIANPAINT,AXISBANK,BAJAJ-AUTO,"
         "BAJFINANCE,BAJAJFINSV,BEL,BHARTIARTL,BPCL,BRITANNIA,CIPLA,COALINDIA,"
