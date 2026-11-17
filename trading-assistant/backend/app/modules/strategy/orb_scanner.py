@@ -18,6 +18,7 @@ from ...config import settings
 from ..market_data.upstox import Instrument, upstox_client
 from ..notifications.telegram import TelegramError, telegram_notifier
 from ..news.worker import news_worker
+from ..risk.intraday import RiskLimits
 from .orb import OpeningRangeBreakout
 from .vwap_sweep import VwapSweepReclaim
 
@@ -39,6 +40,7 @@ class OrbScanner:
         self._signal_date = datetime.now(MARKET_TIMEZONE).date()
         self._daily_signal_count = 0
         self._sent_signal_keys: set[tuple[str, str]] = set()
+        self._risk_limits = RiskLimits()
         self._status: dict[str, Any] = {
             "running": False,
             "connection": "stopped",
@@ -229,6 +231,10 @@ class OrbScanner:
                         message=f"Suppressed {strategy} candidate for {candidate.symbol}: news safety gate is active."
                     )
                     continue
+                quantity, planned_risk = self._size_candidate(candidate.entry, candidate.stop_loss)
+                if quantity < 1:
+                    self._update_status(message=f"Skipped {strategy} candidate for {candidate.symbol}: one share exceeds the planned risk or capital budget.")
+                    continue
                 if not self._reserve_daily_signal(candidate.symbol, candidate.direction):
                     continue
                 hint = {
@@ -238,6 +244,8 @@ class OrbScanner:
                     "entry": candidate.entry,
                     "stop_loss": candidate.stop_loss,
                     "target": candidate.target,
+                    "quantity": quantity,
+                    "planned_risk": planned_risk,
                     "quality_score": quality_score,
                     "vwap": vwap,
                     "rvol": rvol,
@@ -262,6 +270,15 @@ class OrbScanner:
     def _update_status(self, **updates: Any) -> None:
         with self._lock:
             self._status.update(updates)
+
+    def _size_candidate(self, entry: float, stop: float) -> tuple[int, float]:
+        per_share_risk = abs(entry - stop)
+        if per_share_risk <= 0 or entry <= 0:
+            return 0, 0.0
+        risk_quantity = int(self._risk_limits.per_trade_risk // per_share_risk)
+        capital_quantity = int(self._risk_limits.capital // entry)
+        quantity = min(risk_quantity, capital_quantity)
+        return quantity, round(per_share_risk * quantity, 2)
 
     def _reserve_daily_signal(self, symbol: str, direction: str) -> bool:
         today = datetime.now(MARKET_TIMEZONE).date()
