@@ -56,6 +56,8 @@ class ArticleAssessment:
 class NewsAssessment:
     state: NewsState
     halt_new_entries: bool
+    halt_all_symbols: bool
+    blocked_symbols: tuple[str, ...]
     sentiment_score: float
     articles: tuple[ArticleAssessment, ...]
     reasons: tuple[str, ...]
@@ -63,12 +65,16 @@ class NewsAssessment:
 
 # These are intentionally coarse risk terms. A feed adapter must preserve the
 # original headline and URL so the operator can verify the underlying filing.
-_HIGH_IMPACT_TERMS = (
-    "rbi policy", "repo rate", "monetary policy", "sebi ban",
-    "trading suspension", "market-wide circuit", "exchange outage",
-    "trading halt", "cyber attack", "cyberattack", "default",
-    "insolvency", "bank failure", "war declared", "military strike",
-    "terror attack", "emergency", "capital controls",
+_MARKET_WIDE_TERMS = (
+    "repo rate decision", "monetary policy decision", "rbi raises repo rate",
+    "rbi cuts repo rate", "rbi policy decision", "market-wide circuit",
+    "exchange outage", "nse trading halt", "bse trading halt",
+    "market trading halt", "cyber attack on exchange", "cyberattack on exchange",
+    "war declared", "military strike", "terror attack", "capital controls",
+)
+_ISSUER_BLOCK_TERMS = (
+    "trading suspension", "default", "insolvency", "bank failure",
+    "sebi ban", "company banned", "promoter arrested",
 )
 _MEDIUM_IMPACT_TERMS = (
     "investigation", "regulatory action", "search operation", "raid",
@@ -158,6 +164,7 @@ def assess_news(
     weighted_sentiment = 0.0
     sentiment_weight = 0.0
     blocked = False
+    blocked_symbols: set[str] = set()
     caution = False
 
     for article in articles:
@@ -181,8 +188,10 @@ def assess_news(
 
         body = f"{title} {article.summary}".casefold()
         trust = _trust(url)
-        high_terms = _contains(body, _HIGH_IMPACT_TERMS)
+        market_terms = _contains(body, _MARKET_WIDE_TERMS)
+        issuer_block_terms = _contains(body, _ISSUER_BLOCK_TERMS)
         medium_terms = _contains(body, _MEDIUM_IMPACT_TERMS)
+        high_terms = market_terms + issuer_block_terms
         score, label = _sentiment(body)
         symbols = tuple(sorted({s.strip().upper() for s in article.symbols if s.strip()}))
         matched = not relevant or not symbols or bool(relevant.intersection(symbols))
@@ -203,9 +212,12 @@ def assess_news(
 
         # Only a fresh official source can create an automatic broad market
         # entry pause. Third-party claims can raise caution, never hard-block.
-        if matched and high_terms and trust == "OFFICIAL" and age <= 45:
+        if matched and trust == "OFFICIAL" and age <= 45 and market_terms:
             blocked = True
-            global_reasons.append(f"Official high-impact event requires review: {title}")
+            global_reasons.append(f"Official market-wide event requires review: {title}")
+        elif matched and trust == "OFFICIAL" and age <= 45 and issuer_block_terms and symbols:
+            blocked_symbols.update(symbols if not relevant else set(symbols).intersection(relevant))
+            caution = True
         elif matched and (severity > 0 or trust != "OFFICIAL"):
             caution = True
 
@@ -228,12 +240,14 @@ def assess_news(
         ))
 
     aggregate = weighted_sentiment / sentiment_weight if sentiment_weight else 0.0
-    state = NewsState.BLOCKED if blocked else NewsState.CAUTION if caution else NewsState.NORMAL
+    state = NewsState.BLOCKED if blocked or blocked_symbols else NewsState.CAUTION if caution else NewsState.NORMAL
     if not assessments:
         global_reasons.append("No fresh, usable news articles were supplied")
     return NewsAssessment(
         state=state,
-        halt_new_entries=blocked,
+        halt_new_entries=blocked or bool(blocked_symbols),
+        halt_all_symbols=blocked,
+        blocked_symbols=tuple(sorted(blocked_symbols)),
         sentiment_score=round(aggregate, 3),
         articles=tuple(assessments),
         reasons=tuple(global_reasons),
