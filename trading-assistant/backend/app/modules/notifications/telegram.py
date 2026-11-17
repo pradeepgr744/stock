@@ -52,6 +52,12 @@ class TelegramNotifier:
             f"Quantity: {escape(str(hint.get('quantity', 'Not calculated')))}",
             f"Reason: {escape(str(hint.get('reason', 'Not provided')))}",
         ]
+        if hint.get("quality_score") is not None:
+            lines.append(f"Setup quality score: {escape(str(hint['quality_score']))}/100 (not a win probability)")
+        if hint.get("vwap") is not None:
+            lines.append(f"Session VWAP: {escape(str(hint['vwap']))}")
+        if hint.get("rvol") is not None:
+            lines.append(f"Relative volume: {escape(str(hint['rvol']))}x")
         if hint.get("detected_at"):
             lines.append(f"Detected at: {escape(str(hint['detected_at']))}")
         if hint.get("live_scan"):
