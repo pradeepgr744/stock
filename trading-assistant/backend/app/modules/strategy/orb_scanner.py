@@ -17,6 +17,7 @@ from upstox_client.feeder.proto import MarketDataFeedV3_pb2
 from ...config import settings
 from ..market_data.upstox import Instrument, upstox_client
 from ..notifications.telegram import TelegramError, telegram_notifier
+from ..news.worker import news_worker
 from .orb import OpeningRangeBreakout
 from .vwap_sweep import VwapSweepReclaim
 
@@ -35,6 +36,9 @@ class OrbScanner:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._signal_date = datetime.now(MARKET_TIMEZONE).date()
+        self._daily_signal_count = 0
+        self._sent_signal_keys: set[tuple[str, str]] = set()
         self._status: dict[str, Any] = {
             "running": False,
             "connection": "stopped",
@@ -43,6 +47,8 @@ class OrbScanner:
             "last_message_at": None,
             "last_alert_at": None,
             "last_error": None,
+            "daily_signal_count": 0,
+            "daily_signal_limit": 3,
         }
 
     @property
@@ -214,6 +220,15 @@ class OrbScanner:
                 for candidate in vwap_sweep_evaluator.on_feed(symbol, market_feed)
             )
             for candidate, strategy, quality_score, vwap, rvol in candidates:
+                news_status = news_worker.status
+                blocked_symbols = set(news_status.get("blocked_symbols") or [])
+                if news_status.get("halt_new_entries") or news_status.get("halt_all_symbols") or candidate.symbol in blocked_symbols:
+                    self._update_status(
+                        message=f"Suppressed {strategy} candidate for {candidate.symbol}: news safety gate is active."
+                    )
+                    continue
+                if not self._reserve_daily_signal(candidate.symbol, candidate.direction):
+                    continue
                 hint = {
                     "symbol": candidate.symbol,
                     "strategy": strategy,
@@ -245,6 +260,21 @@ class OrbScanner:
     def _update_status(self, **updates: Any) -> None:
         with self._lock:
             self._status.update(updates)
+
+    def _reserve_daily_signal(self, symbol: str, direction: str) -> bool:
+        today = datetime.now(MARKET_TIMEZONE).date()
+        with self._lock:
+            if today != self._signal_date:
+                self._signal_date = today
+                self._daily_signal_count = 0
+                self._sent_signal_keys.clear()
+            key = (symbol, direction)
+            if key in self._sent_signal_keys or self._daily_signal_count >= 3:
+                return False
+            self._sent_signal_keys.add(key)
+            self._daily_signal_count += 1
+            self._status["daily_signal_count"] = self._daily_signal_count
+            return True
 
 
 orb_scanner = OrbScanner()
