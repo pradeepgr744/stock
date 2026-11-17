@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .api.market_data import router as market_data_router
+from .api.research import router as research_router
 from .config import settings
 from .database import database_status
 
@@ -20,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(market_data_router)
+app.include_router(research_router)
 
 
 @app.get("/health")
