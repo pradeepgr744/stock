@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 
 from ..config import settings
 from ..modules.market_data.upstox import UpstoxError, upstox_client
+from ..modules.market_data.nifty200 import Nifty200UniverseError, load_nifty200_symbols
 from ..modules.notifications.telegram import TelegramError, telegram_notifier
 from ..modules.strategy.orb_scanner import OrbScannerError, orb_scanner
 
@@ -45,6 +46,15 @@ def send_test_notification(hint: dict[str, Any] | None = Body(default=None)) -> 
     return {"status": "sent", "message": "Telegram trade alert sample has been sent."}
 
 
+@router.get("/universe/nifty200")
+def get_nifty200_universe(refresh: bool = Query(False)) -> dict[str, Any]:
+    try:
+        symbols = load_nifty200_symbols(force_refresh=refresh)
+    except Nifty200UniverseError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {"universe": "NIFTY 200", "count": len(symbols), "symbols": symbols}
+
+
 @router.get("/scanner/status")
 def scanner_status() -> dict[str, Any]:
     return orb_scanner.status
@@ -55,13 +65,12 @@ def start_scanner() -> dict[str, Any]:
     if orb_scanner.status["running"]:
         return orb_scanner.status
 
-    symbols = [
-        symbol.strip().upper()
-        for symbol in settings.orb_scanner_symbols.split(",")
-        if symbol.strip()
-    ]
-    if not symbols:
-        raise HTTPException(status_code=503, detail="ORB_SCANNER_SYMBOLS is empty.")
+    try:
+        symbols = load_nifty200_symbols()
+    except Nifty200UniverseError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if len(symbols) < 180:
+        raise HTTPException(status_code=503, detail="NIFTY 200 constituent list is incomplete.")
     if not upstox_client.configured:
         raise HTTPException(status_code=503, detail="Upstox access token is not configured.")
     if not telegram_notifier.configured:
@@ -80,7 +89,9 @@ def start_scanner() -> dict[str, Any]:
             detail=f"Could not resolve configured NSE equity symbols: {', '.join(missing)}.",
         )
     try:
-        return orb_scanner.start(list(resolved.values()))
+        result = orb_scanner.start(list(resolved.values()))
+        result.update(universe="NIFTY 200", universe_count=len(symbols))
+        return result
     except OrbScannerError as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
 
