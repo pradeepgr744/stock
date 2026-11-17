@@ -255,10 +255,39 @@ def assess_news(
 
 
 
+def _parse_feed_datetime(value: str) -> datetime:
+    """Parse common RSS/Atom timestamps, including NSE's local-time format."""
+    raw = value.strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            parsed = None
+        if parsed is None:
+            for date_format in (
+                "%d-%b-%Y %H:%M:%S",
+                "%d-%b-%Y %H:%M",
+                "%d-%b-%Y %I:%M:%S %p",
+            ):
+                try:
+                    parsed = datetime.strptime(raw, date_format).replace(tzinfo=IST)
+                    break
+                except ValueError:
+                    continue
+        if parsed is None:
+            raise ValueError("Unsupported feed publication date")
+    if parsed.tzinfo is None:
+        # NSE announcement RSS timestamps without an offset are India local time.
+        parsed = parsed.replace(tzinfo=IST)
+    return parsed
+
+
 def fetch_rss_articles(
     feed_urls: Iterable[str],
     *,
-    timeout_seconds: float = 5.0,
+    timeout_seconds: float = 12.0,
     max_items_per_feed: int = 100,
 ) -> tuple[list[NewsArticle], list[str]]:
     """Fetch configured RSS/Atom feeds; return partial results plus safe errors.
@@ -280,17 +309,45 @@ def fetch_rss_articles(
         try:
             response = httpx.get(
                 url,
-                headers={"User-Agent": "IntradayResearchBot/1.0"},
-                timeout=timeout_seconds,
+                headers={
+                    # NSE may reject generic bot clients; use a conventional
+                    # browser UA and explicit XML/RSS accept headers.
+                    "User-Agent": (
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+                    "Referer": "https://www.nseindia.com/",
+                },
+                timeout=httpx.Timeout(timeout_seconds, connect=5.0),
                 follow_redirects=True,
             )
             response.raise_for_status()
+            if _trust(str(response.url)) != "OFFICIAL":
+                errors.append(f"Feed redirected outside the official-source allowlist: {_domain(url)}")
+                continue
             if len(response.content) > 2_000_000:
                 errors.append(f"Feed response exceeded 2 MB: {_domain(url)}")
                 continue
             root = ET.fromstring(response.content)
-        except (httpx.HTTPError, ET.ParseError, ValueError):
-            errors.append(f"Could not retrieve or parse configured feed: {_domain(url) or 'unknown domain'}")
+        except httpx.HTTPStatusError as exc:
+            errors.append(
+                f"Feed returned HTTP {exc.response.status_code}: {_domain(url) or 'unknown domain'}"
+            )
+            continue
+        except httpx.TimeoutException:
+            errors.append(f"Feed request timed out: {_domain(url) or 'unknown domain'}")
+            continue
+        except httpx.RequestError as exc:
+            errors.append(
+                f"Feed network error ({type(exc).__name__}): {_domain(url) or 'unknown domain'}"
+            )
+            continue
+        except ET.ParseError:
+            errors.append(f"Feed returned invalid XML: {_domain(url) or 'unknown domain'}")
+            continue
+        except ValueError:
+            errors.append(f"Feed response could not be processed: {_domain(url) or 'unknown domain'}")
             continue
 
         # RSS 2.0 uses item; Atom uses entry. Namespace-insensitive child lookup.
@@ -314,12 +371,7 @@ def fetch_rss_articles(
             if not fields.get("title") or not fields.get("link") or not date_value:
                 continue
             try:
-                try:
-                    published_at = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
-                except ValueError:
-                    published_at = parsedate_to_datetime(date_value)
-                if published_at.tzinfo is None:
-                    continue
+                published_at = _parse_feed_datetime(date_value)
             except (TypeError, ValueError, OverflowError):
                 continue
             articles.append(NewsArticle(
