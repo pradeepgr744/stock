@@ -2,7 +2,7 @@ import gzip
 import json
 import unittest
 from datetime import date
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -163,9 +163,8 @@ class MarketDataRouteTests(unittest.TestCase):
         }
 
         with (
-            patch("app.modules.strategy.orb_scanner.settings.upstox_access_token", "token"),
-            patch("app.modules.strategy.orb_scanner.settings.telegram_bot_token", "bot-token"),
-            patch("app.modules.strategy.orb_scanner.settings.telegram_chat_id", "chat-id"),
+            patch("app.modules.market_data.upstox.UpstoxClient.configured", new_callable=PropertyMock, return_value=True),
+            patch("app.modules.notifications.telegram.TelegramNotifier.configured", new_callable=PropertyMock, return_value=True),
             patch("app.api.market_data.load_nifty200_symbols", return_value=symbols),
             patch("app.api.market_data.upstox_client.refresh_nse_equities", return_value=2000),
             patch(
@@ -179,7 +178,7 @@ class MarketDataRouteTests(unittest.TestCase):
         ):
             response = client.post("/api/scanner/start")
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.json()["running"])
         self.assertEqual(response.json()["universe"], "NIFTY 200")
         self.assertEqual(response.json()["universe_count"], 200)
