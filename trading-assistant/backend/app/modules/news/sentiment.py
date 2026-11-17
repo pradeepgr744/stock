@@ -258,6 +258,11 @@ def fetch_rss_articles(
         url = feed_url.strip()
         if not url:
             continue
+        # Only HTTPS feeds on the official exchange/regulator allowlist are
+        # fetched. This avoids turning a configurable feed into an SSRF proxy.
+        if not url.lower().startswith("https://") or _trust(url) != "OFFICIAL":
+            errors.append(f"Rejected non-HTTPS or non-official feed: {_domain(url) or 'unknown domain'}")
+            continue
         try:
             response = httpx.get(
                 url,
@@ -266,6 +271,9 @@ def fetch_rss_articles(
                 follow_redirects=True,
             )
             response.raise_for_status()
+            if len(response.content) > 2_000_000:
+                errors.append(f"Feed response exceeded 2 MB: {_domain(url)}")
+                continue
             root = ET.fromstring(response.content)
         except (httpx.HTTPError, ET.ParseError, ValueError):
             errors.append(f"Could not retrieve or parse configured feed: {_domain(url) or 'unknown domain'}")
