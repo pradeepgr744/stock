@@ -72,6 +72,8 @@ class OrbScanner:
                 "running": True,
                 "connection": "connecting",
                 "message": "Connecting to Upstox live market feed.",
+                "universe": "NIFTY 200",
+                "symbol_count": len(keys_to_symbols),
                 "symbols": list(keys_to_symbols.values()),
                 "last_message_at": None,
                 "last_alert_at": None,
