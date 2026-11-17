@@ -19,6 +19,10 @@ The system is a decision-support tool. Execution remains manual. No position may
 9. **Manual confirmation** — show the evidence, source timestamps, invalidation level, cost estimate, and reasons for rejection. Never silently convert an alert into an order.
 10. **Post-trade learning** — persist candidate, accepted/rejected decision, fills, actual contract-note charges, slippage, exit, and outcome. Re-evaluate by strategy, symbol, sector, time bucket, regime, and catalyst class.
 
+## Portfolio risk gate
+
+The broker-agnostic risk manager is in app/modules/risk/intraday.py. Defaults: ₹250 planned risk per trade, ₹500 aggregate open planned risk, maximum two concurrent positions, maximum three entries per day, ₹750 daily loss stop, entries only from 09:30 through 14:45 IST, and mandatory square-off at 15:15 IST. It evaluates realized plus marked unrealized P&L and rejects entries when limits are breached. It does not submit orders; a broker/execution adapter must keep its position state synchronized and execute flatten instructions. The historical backtester currently remains a serialized single-position simulation, so the portfolio limits are not yet reflected in historical combined-strategy results.
+
 ## News and sentiment policy
 
 ### Source hierarchy
