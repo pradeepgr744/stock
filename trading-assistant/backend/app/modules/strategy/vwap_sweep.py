@@ -6,7 +6,7 @@ only emits manual-review candidates; it never places or manages broker orders.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, datetime, time
 from math import isfinite
 from zoneinfo import ZoneInfo
 
@@ -34,7 +34,7 @@ class LiveSignal:
     rvol: float
     vwap: float
     reason: str
-    timestamp: object
+    timestamp: datetime
 
 
 @dataclass
@@ -211,7 +211,7 @@ class VwapSweepReclaim:
 
             trend_aligned = trend_long if direction == "BUY" else trend_short
             score = (
-                55
+                50
                 + (15 if rvol >= MIN_RVOL else 0)
                 + (10 if rvol >= 2.0 else 0)
                 + (15 if trend_aligned else 0)
@@ -224,7 +224,7 @@ class VwapSweepReclaim:
             reasons.extend([
                 f"Relative volume: {rvol:.2f}x recent 1-minute average",
                 f"Session VWAP: {vwap:.2f}",
-                f"Rule-based setup score: {score}/105 (not a win probability)",
+                f"Rule-based setup score: {score}/100 (not a win probability)",
                 f"Illustrative target: {TARGET_R:.1f}R",
             ])
             return LiveSignal(
@@ -234,7 +234,7 @@ class VwapSweepReclaim:
                 entry=round(entry, 2),
                 stop_loss=round(stop, 2),
                 target=round(target, 2),
-                quality_score=min(score, 100),
+                quality_score=score,
                 rvol=round(rvol, 2),
                 vwap=round(vwap, 2),
                 reason="; ".join(reasons),
