@@ -80,6 +80,8 @@ The current default symbol configuration is a NIFTY 50-style list, not the reque
 
 This is on-demand ingestion. There is no scheduler, background worker, event persistence, continuous monitoring, or live scanner gate yet. The sentiment score is not a calibrated probability and is not a price forecast.
 
+The NSE announcements adapter uses a browser-compatible User-Agent because NSE may reject generic bot clients. It accepts NSE's common `DD-Mon-YYYY HH:MM:SS` publication timestamps as India local time, in addition to ISO/RFC-style timestamps. Feed errors report the HTTP status, timeout, network exception class, or XML parsing failure without exposing response bodies. The recommended current NSE announcements feed is `https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml`; validate it from the deployed Render environment because publisher access policies can differ by hosting network.
+
 ## Risk policy vs implementation
 
 Research limits currently encoded in the risk module:
