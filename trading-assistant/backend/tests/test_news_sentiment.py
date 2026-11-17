@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.modules.news.sentiment import NewsArticle, NewsState, assess_news
+from app.modules.news.sentiment import NewsArticle, NewsState, _parse_feed_datetime, assess_news
 
 IST = ZoneInfo("Asia/Kolkata")
 NOW = datetime(2026, 11, 17, 10, 0, tzinfo=IST)
@@ -72,6 +72,17 @@ class NewsRiskTests(unittest.TestCase):
     def test_naive_datetime_is_rejected(self):
         with self.assertRaises(ValueError):
             assess_news([], as_of=datetime(2026, 11, 17, 10, 0))
+
+    def test_nse_local_timestamp_is_parsed_as_ist(self):
+        parsed = _parse_feed_datetime("17-Nov-2026 09:42:15")
+        self.assertEqual(parsed.tzinfo, IST)
+        self.assertEqual(parsed.hour, 9)
+        self.assertEqual(parsed.minute, 42)
+
+    def test_iso_timestamp_with_offset_is_preserved(self):
+        parsed = _parse_feed_datetime("2026-11-17T04:12:15Z")
+        self.assertIsNotNone(parsed.tzinfo)
+        self.assertEqual(parsed.utcoffset().total_seconds(), 0)
 
 
 if __name__ == "__main__":
