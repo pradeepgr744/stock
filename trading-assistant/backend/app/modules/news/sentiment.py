@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
+import xml.etree.ElementTree as ET
 from enum import Enum
 from hashlib import sha256
 from math import isfinite
 from typing import Iterable
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+
+import httpx
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -234,3 +238,74 @@ def assess_news(
         articles=tuple(assessments),
         reasons=tuple(global_reasons),
     )
+
+
+
+def fetch_rss_articles(
+    feed_urls: Iterable[str],
+    *,
+    timeout_seconds: float = 5.0,
+    max_items_per_feed: int = 100,
+) -> tuple[list[NewsArticle], list[str]]:
+    """Fetch configured RSS/Atom feeds; return partial results plus safe errors.
+
+    Feed URLs must be configured by the operator from the publisher's official
+    site. This adapter does not discover feeds or scrape social networks.
+    """
+    articles: list[NewsArticle] = []
+    errors: list[str] = []
+    for feed_url in feed_urls:
+        url = feed_url.strip()
+        if not url:
+            continue
+        try:
+            response = httpx.get(
+                url,
+                headers={"User-Agent": "IntradayResearchBot/1.0"},
+                timeout=timeout_seconds,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        except (httpx.HTTPError, ET.ParseError, ValueError):
+            errors.append(f"Could not retrieve or parse configured feed: {_domain(url) or 'unknown domain'}")
+            continue
+
+        # RSS 2.0 uses item; Atom uses entry. Namespace-insensitive child lookup.
+        nodes = [node for node in root.iter() if node.tag.rsplit("}", 1)[-1] in {"item", "entry"}]
+        for node in nodes[:max_items_per_feed]:
+            fields: dict[str, str] = {}
+            categories: list[str] = []
+            for child in list(node):
+                name = child.tag.rsplit("}", 1)[-1].lower()
+                value = (child.text or "").strip()
+                if name == "link" and not value:
+                    value = child.attrib.get("href", "").strip()
+                if name == "category":
+                    term = child.attrib.get("term", value).strip()
+                    if term:
+                        categories.append(term)
+                elif name in {"title", "link", "pubdate", "published", "updated", "description", "summary"}:
+                    fields.setdefault(name, value)
+
+            date_value = fields.get("pubdate") or fields.get("published") or fields.get("updated")
+            if not fields.get("title") or not fields.get("link") or not date_value:
+                continue
+            try:
+                try:
+                    published_at = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+                except ValueError:
+                    published_at = parsedate_to_datetime(date_value)
+                if published_at.tzinfo is None:
+                    continue
+            except (TypeError, ValueError, OverflowError):
+                continue
+            articles.append(NewsArticle(
+                title=fields["title"],
+                source=_domain(url) or "configured-feed",
+                url=fields["link"],
+                published_at=published_at,
+                symbols=tuple(categories),
+                summary=fields.get("description", "") or fields.get("summary", ""),
+            ))
+    return articles, errors
