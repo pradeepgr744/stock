@@ -3,7 +3,6 @@ from typing import Any, Literal, NoReturn
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from ..config import settings
 from ..modules.market_data.upstox import UpstoxError, upstox_client
 from ..modules.market_data.nifty200 import Nifty200UniverseError, load_nifty200_symbols
 from ..modules.notifications.telegram import TelegramError, telegram_notifier
@@ -83,14 +82,14 @@ def start_scanner() -> dict[str, Any]:
         _raise_upstox_error(error)
 
     missing = sorted(set(symbols) - set(resolved))
-    if missing:
+    if len(resolved) < 180:
         raise HTTPException(
             status_code=409,
-            detail=f"Could not resolve configured NSE equity symbols: {', '.join(missing)}.",
+            detail=f"Only {len(resolved)} of {len(symbols)} NIFTY 200 symbols resolved; refusing to start an incomplete scanner.",
         )
     try:
         result = orb_scanner.start(list(resolved.values()))
-        result.update(universe="NIFTY 200", universe_count=len(symbols))
+        result.update(universe="NIFTY 200", universe_count=len(resolved), requested_count=len(symbols), missing_symbols=missing)
         return result
     except OrbScannerError as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
