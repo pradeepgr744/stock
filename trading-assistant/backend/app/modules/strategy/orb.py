@@ -10,6 +10,7 @@ OPENING_RANGE_START = time(9, 15)
 OPENING_RANGE_END = time(9, 30)
 SCAN_END = time(14, 45)
 R_MULTIPLE_TARGET = 2.0
+MAX_RISK_PCT = 0.012
 
 
 @dataclass(frozen=True)
@@ -129,7 +130,7 @@ class OpeningRangeBreakout:
         else:
             return None
 
-        if risk <= 0 or target <= 0 or direction in state.emitted_directions:
+        if risk <= 0 or target <= 0 or risk / close > MAX_RISK_PCT or direction in state.emitted_directions:
             return None
 
         state.emitted_directions.add(direction)
