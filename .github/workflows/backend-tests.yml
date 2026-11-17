@@ -1,17 +1,20 @@
-name: Backend tests
+name: Backend and frontend checks
 
 on:
   push:
     branches:
       - main
       - feat/multifactor-nse-scanner
+      - feat/intraday-news-risk-engine
   pull_request:
     paths:
       - "trading-assistant/backend/**"
+      - "trading-assistant/frontend/**"
+      - "trading-assistant/docs/**"
       - ".github/workflows/backend-tests.yml"
 
 jobs:
-  unittest:
+  backend:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,3 +34,20 @@ jobs:
         run: python -m compileall -q app scripts tests
       - name: Run backend unit tests
         run: python -m unittest discover -s tests -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: trading-assistant/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: trading-assistant/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Type-check and build frontend
+        run: npm run build
