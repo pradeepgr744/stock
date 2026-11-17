@@ -226,7 +226,7 @@ class OrbScanner:
             for candidate, strategy, quality_score, vwap, rvol in candidates:
                 news_status = news_worker.status
                 blocked_symbols = set(news_status.get("blocked_symbols") or [])
-                if news_status.get("halt_new_entries") or news_status.get("halt_all_symbols") or candidate.symbol in blocked_symbols:
+                if news_status.get("halt_all_symbols") or (news_status.get("halt_new_entries") and not blocked_symbols) or candidate.symbol in blocked_symbols:
                     self._update_status(
                         message=f"Suppressed {strategy} candidate for {candidate.symbol}: news safety gate is active."
                     )
