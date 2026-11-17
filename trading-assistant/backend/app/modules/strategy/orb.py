@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 OPENING_RANGE_START = time(9, 15)
 OPENING_RANGE_END = time(9, 30)
-SCAN_END = time(15, 0)
+SCAN_END = time(14, 45)
 R_MULTIPLE_TARGET = 2.0
 
 
