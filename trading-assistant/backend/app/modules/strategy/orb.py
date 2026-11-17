@@ -9,6 +9,7 @@ MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 OPENING_RANGE_START = time(9, 15)
 OPENING_RANGE_END = time(9, 30)
 SCAN_END = time(15, 0)
+ENTRY_CUTOFF = time(14, 45)
 R_MULTIPLE_TARGET = 2.0
 
 
@@ -43,19 +44,19 @@ class _SymbolState:
 
 
 class OpeningRangeBreakout:
-    """Conservative alert-only ORB evaluator; does not place or manage orders."""
+    """Research-only ORB evaluator. It emits candidates, never orders."""
 
     def __init__(self) -> None:
         self._states: dict[str, _SymbolState] = {}
 
     def on_feed(self, symbol: str, market_feed: dict) -> list[OrbCandidate]:
-        one_minute_bars = _extract_one_minute_bars(market_feed)
-        if not one_minute_bars:
+        bars = _extract_one_minute_bars(market_feed)
+        if not bars:
             return []
 
         state = self._states.setdefault(symbol, _SymbolState())
         candidates: list[OrbCandidate] = []
-        for bar in sorted(one_minute_bars, key=lambda candle: candle.timestamp):
+        for bar in sorted(bars, key=lambda candle: candle.timestamp):
             if state.session_date != bar.timestamp.date():
                 state.session_date = bar.timestamp.date()
                 state.pending = None
@@ -63,35 +64,26 @@ class OpeningRangeBreakout:
                 state.breakout_bars.clear()
                 state.emitted_directions.clear()
 
-            pending = state.pending
-            if pending is None:
+            if state.pending is None:
                 state.pending = bar
                 continue
-            if bar.timestamp == pending.timestamp:
+            if bar.timestamp <= state.pending.timestamp:
                 state.pending = bar
-                continue
-            if bar.timestamp < pending.timestamp:
                 continue
 
-            candidate = self._complete_bar(symbol, state, pending)
-            if candidate is not None:
+            candidate = self._complete_bar(symbol, state, state.pending)
+            if candidate:
                 candidates.append(candidate)
             state.pending = bar
 
         return candidates
 
-    def _complete_bar(
-        self,
-        symbol: str,
-        state: _SymbolState,
-        bar: MinuteBar,
-    ) -> OrbCandidate | None:
+    def _complete_bar(self, symbol: str, state: _SymbolState, bar: MinuteBar) -> OrbCandidate | None:
         minute = bar.timestamp.time().replace(tzinfo=None)
         if OPENING_RANGE_START <= minute < OPENING_RANGE_END:
             state.opening_bars.append(bar)
             return None
-
-        if minute < OPENING_RANGE_END or minute >= SCAN_END:
+        if minute < OPENING_RANGE_END or minute >= SCAN_END or minute > ENTRY_CUTOFF:
             return None
         if len(state.opening_bars) != 15:
             return None
@@ -105,79 +97,71 @@ class OpeningRangeBreakout:
         if len(bucket) != 5:
             return None
 
-        highs = [opening.high for opening in state.opening_bars]
-        lows = [opening.low for opening in state.opening_bars]
-        opening_high = max(highs)
-        opening_low = min(lows)
-        opening_volume = sum(opening.volume for opening in state.opening_bars) / 3
-        breakout_volume = sum(candle.volume for candle in bucket)
-        close = bucket[-1].close
+        opening_high = max(c.high for c in state.opening_bars)
+        opening_low = min(c.low for c in state.opening_bars)
+        opening_volume = sum(c.volume for c in state.opening_bars) / 3
+        breakout_volume = sum(c.volume for c in bucket)
         if breakout_volume < opening_volume:
             return None
 
-        direction: str
+        close = bucket[-1].close
         if close > opening_high:
             direction = "BUY"
             stop_loss = opening_low
             risk = close - stop_loss
-            target = close + R_MULTIPLE_TARGET * risk
         elif close < opening_low:
             direction = "SELL"
             stop_loss = opening_high
             risk = stop_loss - close
-            target = close - R_MULTIPLE_TARGET * risk
         else:
             return None
 
-        if risk <= 0 or target <= 0 or direction in state.emitted_directions:
+        if risk / close * 100 > 1.2:
+            return None
+        if risk <= 0 or direction in state.emitted_directions:
+            return None
+
+        # Require the breakout close to remain beyond the level: no wick-only signals.
+        body = abs(close - bucket[-1].open)
+        range_size = opening_high - opening_low
+        if range_size <= 0 or body / range_size < 0.25:
+            return None
+
+        target = close + R_MULTIPLE_TARGET * risk if direction == "BUY" else close - R_MULTIPLE_TARGET * risk
+        if target <= 0:
             return None
 
         state.emitted_directions.add(direction)
         reason = (
-            f"Completed 5-minute close broke the 9:15–9:30 IST opening range; "
-            f"5-minute volume {breakout_volume:g} was at least the opening-range "
-            f"5-minute average {opening_volume:g}. Illustrative target is 2R."
+            f"Completed 5-minute close beyond the 9:15–9:30 IST range; "
+            f"breakout volume {breakout_volume:g} met opening-range average "
+            f"{opening_volume:g}; risk is {risk / close * 100:.2f}% of entry. "
+            "Illustrative 2R target; no win probability inferred."
         )
-        return OrbCandidate(
-            symbol=symbol,
-            direction=direction,
-            entry=close,
-            stop_loss=stop_loss,
-            target=target,
-            reason=reason,
-            timestamp=bucket[-1].timestamp,
-        )
+        return OrbCandidate(symbol, direction, close, stop_loss, target, reason, bucket[-1].timestamp)
 
 
 def _extract_one_minute_bars(market_feed: dict) -> list[MinuteBar]:
     try:
-        ohlc_entries = market_feed["marketOHLC"]["ohlc"]
+        entries = market_feed["marketOHLC"]["ohlc"]
     except (KeyError, TypeError):
         return []
 
     bars: list[MinuteBar] = []
-    for entry in ohlc_entries:
+    for entry in entries:
         if not isinstance(entry, dict) or entry.get("interval") != "I1":
             continue
         try:
-            timestamp = datetime.fromtimestamp(
-                int(entry["ts"]) / 1000,
-                tz=MARKET_TIMEZONE,
-            ).replace(second=0, microsecond=0)
-            values = {
-                name: float(entry[name])
-                for name in ("open", "high", "low", "close")
-            }
+            timestamp = datetime.fromtimestamp(int(entry["ts"]) / 1000, tz=MARKET_TIMEZONE).replace(second=0, microsecond=0)
+            values = {name: float(entry[name]) for name in ("open", "high", "low", "close")}
             volume = int(entry["vol"])
         except (KeyError, TypeError, ValueError, OverflowError, OSError):
             continue
-        if not all(isfinite(value) and value > 0 for value in values.values()):
+        if not all(isfinite(value) and value > 0 for value in values.values()) or volume < 0:
             continue
-        if values["high"] < max(values["open"], values["close"], values["low"]):
+        if values["high"] < max(values["open"], values["close"]):
             continue
-        if values["low"] > min(values["open"], values["close"], values["high"]):
-            continue
-        if volume < 0:
+        if values["low"] > min(values["open"], values["close"]):
             continue
         bars.append(MinuteBar(timestamp=timestamp, volume=volume, **values))
     return bars
