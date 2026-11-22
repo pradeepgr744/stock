@@ -19,9 +19,10 @@ class NewsWorkerGuardTests(unittest.TestCase):
 class LiveScannerGuardTests(unittest.TestCase):
     def test_quantity_uses_per_trade_risk_and_capital_limit(self):
         scanner = OrbScanner()
-        quantity, planned_risk = scanner._size_candidate(100.0, 99.0)
-        self.assertEqual(quantity, 250)
-        self.assertEqual(planned_risk, 250.0)
+        quantity, planned_risk, estimated_cost = scanner._size_candidate(100.0, 99.0)
+        self.assertEqual(quantity, 217)
+        self.assertEqual(planned_risk, 249.55)
+        self.assertEqual(estimated_cost, 32.55)
 
     def test_daily_signal_cap_and_symbol_direction_deduplication(self):
         scanner = OrbScanner()
