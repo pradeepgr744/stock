@@ -59,7 +59,13 @@ class NewsWorker:
                         self._status.update(row.payload)
                         return dict(self._status)
         except Exception:
-            logger.debug("Could not read durable news worker status", exc_info=True)
+            logger.warning("Could not read durable news worker status; treating coverage as unsafe", exc_info=True)
+            with self._lock:
+                snapshot = dict(self._status)
+            snapshot["status_store_unavailable"] = True
+            snapshot["halt_new_entries"] = True
+            snapshot["halt_all_symbols"] = True
+            return snapshot
         with self._lock:
             return dict(self._status)
 
