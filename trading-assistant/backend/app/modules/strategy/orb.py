@@ -8,8 +8,9 @@ from zoneinfo import ZoneInfo
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 OPENING_RANGE_START = time(9, 15)
 OPENING_RANGE_END = time(9, 30)
-SCAN_END = time(15, 0)
-R_MULTIPLE_TARGET = 2.0
+SCAN_END = time(14, 45)
+R_MULTIPLE_TARGET = 2.5
+MAX_RISK_PCT = 0.012
 
 
 @dataclass(frozen=True)
@@ -129,14 +130,14 @@ class OpeningRangeBreakout:
         else:
             return None
 
-        if risk <= 0 or target <= 0 or direction in state.emitted_directions:
+        if risk <= 0 or target <= 0 or risk / close > MAX_RISK_PCT or direction in state.emitted_directions:
             return None
 
         state.emitted_directions.add(direction)
         reason = (
             f"Completed 5-minute close broke the 9:15–9:30 IST opening range; "
             f"5-minute volume {breakout_volume:g} was at least the opening-range "
-            f"5-minute average {opening_volume:g}. Illustrative target is 2R."
+            f"5-minute average {opening_volume:g}. Illustrative target is 2.5R."
         )
         return OrbCandidate(
             symbol=symbol,

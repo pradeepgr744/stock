@@ -49,28 +49,28 @@ class OpeningRangeBreakoutTests(unittest.TestCase):
 
     def build_opening_range(self) -> None:
         for minute in range(15):
-            self.send_bar(minute)
-        self.send_bar(15, open_price=100, high=102, low=98, close=101)
+            self.send_bar(minute, open_price=100.1, high=100.5, low=100.0, close=100.2)
+        self.send_bar(15, open_price=100.2, high=100.6, low=100.1, close=100.4)
 
     def test_sends_candidate_after_completed_breakout_bar_and_only_once(self) -> None:
         self.build_opening_range()
         for minute in range(15, 20):
             self.send_bar(
                 minute,
-                open_price=102,
-                high=104,
-                low=101,
-                close=103,
+                open_price=100.5,
+                high=101.0,
+                low=100.3,
+                close=100.8,
                 volume=100,
             )
 
-        candidates = self.send_bar(20, open_price=103, high=104, low=102, close=103)
+        candidates = self.send_bar(20, open_price=100.8, high=101.0, low=100.5, close=100.8)
 
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].direction, "BUY")
-        self.assertEqual(candidates[0].entry, 103)
-        self.assertEqual(candidates[0].stop_loss, 99)
-        self.assertEqual(candidates[0].target, 111)
+        self.assertEqual(candidates[0].entry, 100.8)
+        self.assertEqual(candidates[0].stop_loss, 100.0)
+        self.assertAlmostEqual(candidates[0].target, 102.8)
         self.assertEqual(self.send_bar(25), [])
 
     def test_rejects_breakout_without_volume_confirmation(self) -> None:
@@ -78,10 +78,10 @@ class OpeningRangeBreakoutTests(unittest.TestCase):
         for minute in range(15, 20):
             self.send_bar(
                 minute,
-                open_price=102,
-                high=104,
-                low=101,
-                close=103,
+                open_price=100.5,
+                high=101.0,
+                low=100.3,
+                close=100.8,
                 volume=10,
             )
 
@@ -92,9 +92,19 @@ class OpeningRangeBreakoutTests(unittest.TestCase):
             self.send_bar(minute)
         self.send_bar(15)
         for minute in range(15, 20):
-            self.send_bar(minute, open_price=102, high=104, low=101, close=103)
+            self.send_bar(minute, open_price=100.5, high=101.0, low=100.3, close=100.8)
 
         self.assertEqual(self.send_bar(20), [])
+
+    def test_rejects_breakout_when_stop_distance_exceeds_risk_cap(self) -> None:
+        for minute in range(15):
+            self.send_bar(minute, open_price=100, high=102, low=98, close=100)
+        for minute in range(15, 20):
+            self.send_bar(minute, open_price=102, high=104, low=101, close=103)
+        self.assertEqual(
+            self.send_bar(20, open_price=103, high=104, low=102, close=103),
+            [],
+        )
 
     def test_ignores_non_minute_and_invalid_candles(self) -> None:
         invalid_feed = {
