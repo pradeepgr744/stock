@@ -246,6 +246,7 @@ class OrbScanner:
                 news_gate_active = (
                     news_status.get("state") != "AVAILABLE"
                     or heartbeat_stale
+                    or news_status.get("status_store_unavailable")
                     or news_status.get("halt_all_symbols")
                     or news_status.get("halt_new_entries")
                 )
