@@ -228,12 +228,30 @@ class OrbScanner:
             for candidate, strategy, quality_score, vwap, rvol in candidates:
                 news_status = news_worker.status
                 blocked_symbols = set(news_status.get("blocked_symbols") or [])
-                if news_status.get("halt_all_symbols") or (news_status.get("halt_new_entries") and not blocked_symbols) or candidate.symbol in blocked_symbols:
+                now = datetime.now(MARKET_TIMEZONE)
+                heartbeat_raw = news_status.get("last_heartbeat_at")
+                heartbeat_stale = True
+                if heartbeat_raw:
+                    try:
+                        heartbeat = datetime.fromisoformat(heartbeat_raw)
+                        if heartbeat.tzinfo is None:
+                            heartbeat = heartbeat.replace(tzinfo=MARKET_TIMEZONE)
+                        heartbeat_stale = (
+                            now - heartbeat.astimezone(MARKET_TIMEZONE)
+                        ).total_seconds() > max(600, settings.news_poll_interval_seconds * 2)
+                    except (TypeError, ValueError):
+                        heartbeat_stale = True
+                news_gate_active = (
+                    news_status.get("state") != "AVAILABLE"
+                    or heartbeat_stale
+                    or news_status.get("halt_all_symbols")
+                    or news_status.get("halt_new_entries")
+                )
+                if news_gate_active or candidate.symbol in blocked_symbols:
                     self._update_status(
-                        message=f"Suppressed {strategy} candidate for {candidate.symbol}: news safety gate is active."
+                        message=f"Suppressed {strategy} candidate for {candidate.symbol}: news coverage/event safety gate is active or stale."
                     )
                     continue
-                now = datetime.now(MARKET_TIMEZONE)
                 age_seconds = (now - candidate.timestamp.astimezone(MARKET_TIMEZONE)).total_seconds()
                 if age_seconds < -30 or age_seconds > MAX_SIGNAL_AGE_SECONDS:
                     self._update_status(message=f"Skipped stale {strategy} candidate for {candidate.symbol} ({int(age_seconds)}s old).")
