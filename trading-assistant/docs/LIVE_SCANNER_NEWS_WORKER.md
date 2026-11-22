@@ -4,7 +4,7 @@
 
 The scanner resolves the current NIFTY 200 constituent CSV from the Nifty Indices site, then intersects it with the NSE equity instrument master downloaded from Upstox. It will not silently call a partial list the NIFTY 200. The scanner refuses to start unless all 200 constituents resolve. The constituent list is cached in memory for 12 hours; use `GET /api/universe/nifty200?refresh=true` to force a refresh.
 
-The Upstox Market Data Feed V3 websocket is subscribed in full mode for the resolved symbols. It evaluates completed one-minute bars and emits:
+The Upstox Market Data Feed V3 websocket is subscribed in full mode for the resolved symbols. A PostgreSQL advisory lock allows only one live scanner instance to publish alerts across Render replicas or Uvicorn workers; the lock is released when the scanner stops. It evaluates completed one-minute bars and emits:
 
 - **ORB:** 09:15–09:30 IST opening range; completed five-minute breakout confirmation and volume confirmation.
 - **VWAP reclaim:** a completed candle crosses and holds session VWAP with relative-volume and trend/body confirmation.
