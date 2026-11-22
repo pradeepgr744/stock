@@ -15,10 +15,12 @@ from websockets.exceptions import InvalidStatus
 from upstox_client.feeder.proto import MarketDataFeedV3_pb2
 
 from ...config import settings
+from ...database import SessionLocal
 from ..market_data.upstox import Instrument, upstox_client
 from ..notifications.telegram import TelegramError, telegram_notifier
 from ..news.worker import news_worker
 from ..risk.intraday import RiskLimits
+from ..risk.ledger import build_risk_manager
 from .orb import OpeningRangeBreakout
 from .vwap_sweep import VwapSweepReclaim
 
@@ -264,16 +266,25 @@ class OrbScanner:
                     self._update_status(message=f"Skipped {strategy} candidate for {candidate.symbol}: one share exceeds the risk or capital budget including estimated costs.")
                     continue
 
-                risk_decision = self._risk_limits.evaluate_entry(
-                    symbol=candidate.symbol,
-                    side="LONG" if candidate.direction == "BUY" else "SHORT",
-                    quantity=quantity,
-                    entry_price=candidate.entry,
-                    stop_price=candidate.stop_loss,
-                    target_price=candidate.target,
-                    now=now,
-                    estimated_round_trip_cost=estimated_cost,
-                )
+                try:
+                    with SessionLocal() as session:
+                        risk_manager = build_risk_manager(session, now)
+                        risk_decision = risk_manager.evaluate_entry(
+                            symbol=candidate.symbol,
+                            side="LONG" if candidate.direction == "BUY" else "SHORT",
+                            quantity=quantity,
+                            entry_price=candidate.entry,
+                            stop_price=candidate.stop_loss,
+                            target_price=candidate.target,
+                            now=now,
+                            estimated_round_trip_cost=estimated_cost,
+                        )
+                except Exception as error:
+                    logger.exception("Manual risk ledger unavailable; suppressing candidate")
+                    self._update_status(
+                        message=f"Skipped {strategy} candidate for {candidate.symbol}: manual risk ledger unavailable ({type(error).__name__})."
+                    )
+                    continue
                 if not risk_decision.allowed:
                     self._update_status(
                         message=f"Skipped {strategy} candidate for {candidate.symbol}: {risk_decision.reason}."
