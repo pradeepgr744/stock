@@ -24,6 +24,8 @@ from .vwap_sweep import VwapSweepReclaim
 
 logger = logging.getLogger(__name__)
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
+ESTIMATED_ROUND_TRIP_COST_RATE = 0.0015
+MAX_SIGNAL_AGE_SECONDS = 120
 
 
 class OrbScannerError(Exception):
@@ -231,9 +233,33 @@ class OrbScanner:
                         message=f"Suppressed {strategy} candidate for {candidate.symbol}: news safety gate is active."
                     )
                     continue
-                quantity, planned_risk = self._size_candidate(candidate.entry, candidate.stop_loss)
+                now = datetime.now(MARKET_TIMEZONE)
+                age_seconds = (now - candidate.timestamp.astimezone(MARKET_TIMEZONE)).total_seconds()
+                if age_seconds < -30 or age_seconds > MAX_SIGNAL_AGE_SECONDS:
+                    self._update_status(message=f"Skipped stale {strategy} candidate for {candidate.symbol} ({int(age_seconds)}s old).")
+                    continue
+
+                quantity, planned_risk, estimated_cost = self._size_candidate(
+                    candidate.entry, candidate.stop_loss
+                )
                 if quantity < 1:
-                    self._update_status(message=f"Skipped {strategy} candidate for {candidate.symbol}: one share exceeds the planned risk or capital budget.")
+                    self._update_status(message=f"Skipped {strategy} candidate for {candidate.symbol}: one share exceeds the risk or capital budget including estimated costs.")
+                    continue
+
+                risk_decision = self._risk_limits.evaluate_entry(
+                    symbol=candidate.symbol,
+                    side="LONG" if candidate.direction == "BUY" else "SHORT",
+                    quantity=quantity,
+                    entry_price=candidate.entry,
+                    stop_price=candidate.stop_loss,
+                    target_price=candidate.target,
+                    now=now,
+                    estimated_round_trip_cost=estimated_cost,
+                )
+                if not risk_decision.allowed:
+                    self._update_status(
+                        message=f"Skipped {strategy} candidate for {candidate.symbol}: {risk_decision.reason}."
+                    )
                     continue
                 if not self._reserve_daily_signal(candidate.symbol, candidate.direction):
                     continue
@@ -246,6 +272,7 @@ class OrbScanner:
                     "target": candidate.target,
                     "quantity": quantity,
                     "planned_risk": planned_risk,
+                    "estimated_round_trip_cost": estimated_cost,
                     "quality_score": quality_score,
                     "vwap": vwap,
                     "rvol": rvol,
@@ -271,14 +298,22 @@ class OrbScanner:
         with self._lock:
             self._status.update(updates)
 
-    def _size_candidate(self, entry: float, stop: float) -> tuple[int, float]:
+    def _size_candidate(self, entry: float, stop: float) -> tuple[int, float, float]:
         per_share_risk = abs(entry - stop)
         if per_share_risk <= 0 or entry <= 0:
-            return 0, 0.0
+            return 0, 0.0, 0.0
         risk_quantity = int(self._risk_limits.per_trade_risk // per_share_risk)
-        capital_quantity = int(self._risk_limits.capital // entry)
+        capital_quantity = int(self._risk_limits.max_capital_exposure // entry)
         quantity = min(risk_quantity, capital_quantity)
-        return quantity, round(per_share_risk * quantity, 2)
+        while quantity > 0:
+            estimated_cost = round(
+                quantity * entry * ESTIMATED_ROUND_TRIP_COST_RATE, 2
+            )
+            planned_risk = round(per_share_risk * quantity + estimated_cost, 2)
+            if planned_risk <= self._risk_limits.per_trade_risk:
+                return quantity, planned_risk, estimated_cost
+            quantity -= 1
+        return 0, 0.0, 0.0
 
     def _reserve_daily_signal(self, symbol: str, direction: str) -> bool:
         today = datetime.now(MARKET_TIMEZONE).date()
