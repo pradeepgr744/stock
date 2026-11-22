@@ -19,7 +19,7 @@ LOOKBACK_BARS = 20
 MIN_RVOL = 1.5
 MIN_QUALITY = 75
 MAX_RISK_PCT = 1.2
-TARGET_R = 2.0
+TARGET_R = 2.5
 
 
 @dataclass(frozen=True)
