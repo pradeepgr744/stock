@@ -25,3 +25,13 @@ class NewsEvent(Base):
     source_trust: Mapped[str] = mapped_column(String(32), nullable=False, default="UNVERIFIED")
     event_level: Mapped[str] = mapped_column(String(16), nullable=False, default="LOW")
     reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+
+class NewsWorkerState(Base):
+    """Single-row durable worker status shared by all API instances."""
+
+    __tablename__ = "news_worker_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
