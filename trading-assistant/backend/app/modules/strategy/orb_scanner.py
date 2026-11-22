@@ -32,6 +32,39 @@ MAX_SIGNAL_AGE_SECONDS = 120
 _SCANNER_LOCK_KEY = 724_202_613
 
 
+
+
+
+def news_gate_blocks_candidate(
+    news_status: dict[str, Any],
+    symbol: str,
+    now: datetime,
+) -> bool:
+    """Fail closed on bad coverage; scope official issuer blocks to one symbol."""
+    blocked_symbols = set(news_status.get("blocked_symbols") or [])
+    heartbeat_raw = news_status.get("last_heartbeat_at")
+    heartbeat_stale = True
+    if heartbeat_raw:
+        try:
+            heartbeat = datetime.fromisoformat(heartbeat_raw)
+            if heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=MARKET_TIMEZONE)
+            heartbeat_stale = (
+                now - heartbeat.astimezone(MARKET_TIMEZONE)
+            ).total_seconds() > max(600, settings.news_poll_interval_seconds * 2)
+        except (TypeError, ValueError):
+            heartbeat_stale = True
+
+    global_halt = (
+        news_status.get("state") != "AVAILABLE"
+        or heartbeat_stale
+        or news_status.get("status_store_unavailable")
+        or news_status.get("halt_all_symbols")
+        or (news_status.get("halt_new_entries") and not blocked_symbols)
+    )
+    return bool(global_halt or symbol in blocked_symbols)
+
+
 class OrbScannerError(Exception):
     def __init__(self, message: str, status_code: int = 503) -> None:
         super().__init__(message)
@@ -260,31 +293,8 @@ class OrbScanner:
             )
             for candidate, strategy, quality_score, vwap, rvol in candidates:
                 news_status = news_worker.status
-                blocked_symbols = set(news_status.get("blocked_symbols") or [])
                 now = datetime.now(MARKET_TIMEZONE)
-                heartbeat_raw = news_status.get("last_heartbeat_at")
-                heartbeat_stale = True
-                if heartbeat_raw:
-                    try:
-                        heartbeat = datetime.fromisoformat(heartbeat_raw)
-                        if heartbeat.tzinfo is None:
-                            heartbeat = heartbeat.replace(tzinfo=MARKET_TIMEZONE)
-                        heartbeat_stale = (
-                            now - heartbeat.astimezone(MARKET_TIMEZONE)
-                        ).total_seconds() > max(600, settings.news_poll_interval_seconds * 2)
-                    except (TypeError, ValueError):
-                        heartbeat_stale = True
-                news_gate_active = (
-                    news_status.get("state") != "AVAILABLE"
-                    or heartbeat_stale
-                    or news_status.get("status_store_unavailable")
-                    or news_status.get("halt_all_symbols")
-                    or (
-                        news_status.get("halt_new_entries")
-                        and not blocked_symbols
-                    )
-                )
-                if news_gate_active or candidate.symbol in blocked_symbols:
+                if news_gate_blocks_candidate(news_status, candidate.symbol, now):
                     self._update_status(
                         message=f"Suppressed {strategy} candidate for {candidate.symbol}: news coverage/event safety gate is active or stale."
                     )
