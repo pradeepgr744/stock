@@ -10,20 +10,59 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import websockets
+from sqlalchemy import text
 from google.protobuf.json_format import MessageToDict
 from websockets.exceptions import InvalidStatus
 from upstox_client.feeder.proto import MarketDataFeedV3_pb2
 
 from ...config import settings
+from ...database import SessionLocal, engine
 from ..market_data.upstox import Instrument, upstox_client
 from ..notifications.telegram import TelegramError, telegram_notifier
 from ..news.worker import news_worker
 from ..risk.intraday import RiskLimits
+from ..risk.ledger import build_risk_manager
 from .orb import OpeningRangeBreakout
 from .vwap_sweep import VwapSweepReclaim
 
 logger = logging.getLogger(__name__)
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
+ESTIMATED_ROUND_TRIP_COST_RATE = 0.0015
+MAX_SIGNAL_AGE_SECONDS = 120
+_SCANNER_LOCK_KEY = 724_202_613
+
+
+
+
+
+def news_gate_blocks_candidate(
+    news_status: dict[str, Any],
+    symbol: str,
+    now: datetime,
+) -> bool:
+    """Fail closed on bad coverage; scope official issuer blocks to one symbol."""
+    blocked_symbols = set(news_status.get("blocked_symbols") or [])
+    heartbeat_raw = news_status.get("last_heartbeat_at")
+    heartbeat_stale = True
+    if heartbeat_raw:
+        try:
+            heartbeat = datetime.fromisoformat(heartbeat_raw)
+            if heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=MARKET_TIMEZONE)
+            heartbeat_stale = (
+                now - heartbeat.astimezone(MARKET_TIMEZONE)
+            ).total_seconds() > max(600, settings.news_poll_interval_seconds * 2)
+        except (TypeError, ValueError):
+            heartbeat_stale = True
+
+    global_halt = (
+        news_status.get("state") != "AVAILABLE"
+        or heartbeat_stale
+        or news_status.get("status_store_unavailable")
+        or news_status.get("halt_all_symbols")
+        or (news_status.get("halt_new_entries") and not blocked_symbols)
+    )
+    return bool(global_halt or symbol in blocked_symbols)
 
 
 class OrbScannerError(Exception):
@@ -112,20 +151,49 @@ class OrbScanner:
             return dict(self._status)
 
     def _thread_main(self, keys_to_symbols: dict[str, str]) -> None:
+        lock_connection = None
+        lock_acquired = False
         try:
+            # Only one scanner may publish live alerts across Render replicas
+            # or multiple Uvicorn workers.
+            lock_connection = engine.connect()
+            if engine.dialect.name == "postgresql":
+                lock_acquired = bool(
+                    lock_connection.execute(
+                        text("SELECT pg_try_advisory_lock(:lock_key)"),
+                        {"lock_key": _SCANNER_LOCK_KEY},
+                    ).scalar()
+                )
+                if not lock_acquired:
+                    self._update_status(
+                        running=False,
+                        connection="standby",
+                        message="Another application instance currently owns the live scanner lock.",
+                    )
+                    return
             asyncio.run(self._run(keys_to_symbols))
         except Exception as error:
             logger.exception("ORB scanner stopped unexpectedly")
             self._update_status(
                 running=False,
                 connection="error",
-                message="Scanner stopped unexpectedly.",
+                message="Scanner stopped unexpectedly; live alerts are disabled.",
                 last_error=str(error),
             )
         finally:
+            if lock_connection is not None:
+                try:
+                    if lock_acquired:
+                        lock_connection.execute(
+                            text("SELECT pg_advisory_unlock(:lock_key)"),
+                            {"lock_key": _SCANNER_LOCK_KEY},
+                        )
+                except Exception:
+                    logger.exception("Could not release live scanner advisory lock")
+                lock_connection.close()
             with self._lock:
                 self._status["running"] = False
-                if self._status["connection"] != "error":
+                if self._status["connection"] not in {"error", "standby"}:
                     self._status.update(
                         connection="stopped",
                         message="Scanner is stopped.",
@@ -225,15 +293,47 @@ class OrbScanner:
             )
             for candidate, strategy, quality_score, vwap, rvol in candidates:
                 news_status = news_worker.status
-                blocked_symbols = set(news_status.get("blocked_symbols") or [])
-                if news_status.get("halt_all_symbols") or (news_status.get("halt_new_entries") and not blocked_symbols) or candidate.symbol in blocked_symbols:
+                now = datetime.now(MARKET_TIMEZONE)
+                if news_gate_blocks_candidate(news_status, candidate.symbol, now):
                     self._update_status(
-                        message=f"Suppressed {strategy} candidate for {candidate.symbol}: news safety gate is active."
+                        message=f"Suppressed {strategy} candidate for {candidate.symbol}: news coverage/event safety gate is active or stale."
                     )
                     continue
-                quantity, planned_risk = self._size_candidate(candidate.entry, candidate.stop_loss)
+                age_seconds = (now - candidate.timestamp.astimezone(MARKET_TIMEZONE)).total_seconds()
+                if age_seconds < -30 or age_seconds > MAX_SIGNAL_AGE_SECONDS:
+                    self._update_status(message=f"Skipped stale {strategy} candidate for {candidate.symbol} ({int(age_seconds)}s old).")
+                    continue
+
+                quantity, planned_risk, estimated_cost = self._size_candidate(
+                    candidate.entry, candidate.stop_loss
+                )
                 if quantity < 1:
-                    self._update_status(message=f"Skipped {strategy} candidate for {candidate.symbol}: one share exceeds the planned risk or capital budget.")
+                    self._update_status(message=f"Skipped {strategy} candidate for {candidate.symbol}: one share exceeds the risk or capital budget including estimated costs.")
+                    continue
+
+                try:
+                    with SessionLocal() as session:
+                        risk_manager = build_risk_manager(session, now)
+                        risk_decision = risk_manager.evaluate_entry(
+                            symbol=candidate.symbol,
+                            side="LONG" if candidate.direction == "BUY" else "SHORT",
+                            quantity=quantity,
+                            entry_price=candidate.entry,
+                            stop_price=candidate.stop_loss,
+                            target_price=candidate.target,
+                            now=now,
+                            estimated_round_trip_cost=estimated_cost,
+                        )
+                except Exception as error:
+                    logger.exception("Manual risk ledger unavailable; suppressing candidate")
+                    self._update_status(
+                        message=f"Skipped {strategy} candidate for {candidate.symbol}: manual risk ledger unavailable ({type(error).__name__})."
+                    )
+                    continue
+                if not risk_decision.allowed:
+                    self._update_status(
+                        message=f"Skipped {strategy} candidate for {candidate.symbol}: {risk_decision.reason}."
+                    )
                     continue
                 if not self._reserve_daily_signal(candidate.symbol, candidate.direction):
                     continue
@@ -246,6 +346,7 @@ class OrbScanner:
                     "target": candidate.target,
                     "quantity": quantity,
                     "planned_risk": planned_risk,
+                    "estimated_round_trip_cost": estimated_cost,
                     "quality_score": quality_score,
                     "vwap": vwap,
                     "rvol": rvol,
@@ -271,14 +372,22 @@ class OrbScanner:
         with self._lock:
             self._status.update(updates)
 
-    def _size_candidate(self, entry: float, stop: float) -> tuple[int, float]:
+    def _size_candidate(self, entry: float, stop: float) -> tuple[int, float, float]:
         per_share_risk = abs(entry - stop)
         if per_share_risk <= 0 or entry <= 0:
-            return 0, 0.0
+            return 0, 0.0, 0.0
         risk_quantity = int(self._risk_limits.per_trade_risk // per_share_risk)
-        capital_quantity = int(self._risk_limits.capital // entry)
+        capital_quantity = int(self._risk_limits.max_capital_exposure // entry)
         quantity = min(risk_quantity, capital_quantity)
-        return quantity, round(per_share_risk * quantity, 2)
+        while quantity > 0:
+            estimated_cost = round(
+                quantity * entry * ESTIMATED_ROUND_TRIP_COST_RATE, 2
+            )
+            planned_risk = round(per_share_risk * quantity + estimated_cost, 2)
+            if planned_risk <= self._risk_limits.per_trade_risk:
+                return quantity, planned_risk, estimated_cost
+            quantity -= 1
+        return 0, 0.0, 0.0
 
     def _reserve_daily_signal(self, symbol: str, direction: str) -> bool:
         today = datetime.now(MARKET_TIMEZONE).date()

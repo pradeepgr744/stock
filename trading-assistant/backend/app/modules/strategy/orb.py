@@ -9,7 +9,7 @@ MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 OPENING_RANGE_START = time(9, 15)
 OPENING_RANGE_END = time(9, 30)
 SCAN_END = time(14, 45)
-R_MULTIPLE_TARGET = 2.0
+R_MULTIPLE_TARGET = 2.5
 MAX_RISK_PCT = 0.012
 
 
@@ -137,7 +137,7 @@ class OpeningRangeBreakout:
         reason = (
             f"Completed 5-minute close broke the 9:15–9:30 IST opening range; "
             f"5-minute volume {breakout_volume:g} was at least the opening-range "
-            f"5-minute average {opening_volume:g}. Illustrative target is 2R."
+            f"5-minute average {opening_volume:g}. Illustrative target is 2.5R."
         )
         return OrbCandidate(
             symbol=symbol,

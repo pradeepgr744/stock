@@ -70,7 +70,7 @@ class OpeningRangeBreakoutTests(unittest.TestCase):
         self.assertEqual(candidates[0].direction, "BUY")
         self.assertEqual(candidates[0].entry, 100.8)
         self.assertEqual(candidates[0].stop_loss, 100.0)
-        self.assertAlmostEqual(candidates[0].target, 102.4)
+        self.assertAlmostEqual(candidates[0].target, 102.8)
         self.assertEqual(self.send_bar(25), [])
 
     def test_rejects_breakout_without_volume_confirmation(self) -> None:

@@ -7,9 +7,11 @@ from fastapi.responses import JSONResponse
 from .api.market_data import router as market_data_router
 from .api.research import router as research_router
 from .api.news_events import router as news_events_router
+from .api.risk import router as risk_router
 from .config import settings
 from .database import database_status
 from .modules.news.worker import news_worker
+from .modules.strategy.orb_scanner import orb_scanner
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,6 +19,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        orb_scanner.stop()
         news_worker.stop()
 
 
@@ -37,6 +40,7 @@ app.add_middleware(
 app.include_router(market_data_router)
 app.include_router(research_router)
 app.include_router(news_events_router)
+app.include_router(risk_router)
 
 
 @app.get("/health")

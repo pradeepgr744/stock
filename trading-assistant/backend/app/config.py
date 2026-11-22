@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     news_rss_feed_urls: str = ""
+    risk_api_key: str = ""
     news_poll_interval_seconds: int = 300
     news_max_article_age_minutes: int = 90
     nifty200_constituents_url: str = "https://www.niftyindices.com/IndexConstituent/ind_nifty200list.csv"
