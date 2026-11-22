@@ -31,7 +31,7 @@ class TelegramNotifier:
         if hint.get("demo"):
             title = "DEMO TRADE ALERT — NOT A LIVE RECOMMENDATION"
         elif hint.get("live_scan"):
-            title = "LIVE ORB CANDIDATE — MANUAL REVIEW ONLY"
+            title = "LIVE TRADE CANDIDATE — MANUAL REVIEW ONLY"
         else:
             title = "Trading hint — manual execution only"
         stop_label = (
@@ -53,7 +53,9 @@ class TelegramNotifier:
             f"Reason: {escape(str(hint.get('reason', 'Not provided')))}",
         ]
         if hint.get("planned_risk") is not None:
-            lines.append(f"Estimated stop risk before costs: {escape(str(hint['planned_risk']))}")
+            lines.append(f"Planned stop risk incl. estimated costs: {escape(str(hint['planned_risk']))}")
+        if hint.get("estimated_round_trip_cost") is not None:
+            lines.append(f"Estimated round-trip costs: {escape(str(hint['estimated_round_trip_cost']))}")
         if hint.get("quality_score") is not None:
             lines.append(f"Setup quality score: {escape(str(hint['quality_score']))}/100 (not a win probability)")
         if hint.get("vwap") is not None:
