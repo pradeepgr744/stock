@@ -287,9 +287,12 @@ def close_manual_trade(trade_id: str, request: ManualTradeExit) -> dict:
             points = request.exit_price - row.entry_price
             if row.side == "SHORT":
                 points = -points
-            realized_pnl = points * row.quantity - row.entry_cost - request.exit_cost
+            # exit_cost is the actual round-trip cost when supplied; otherwise
+            # retain the conservative estimate recorded at entry.
+            total_cost = request.exit_cost if request.exit_cost > 0 else row.entry_cost
+            realized_pnl = points * row.quantity - total_cost
             row.exit_price = request.exit_price
-            row.exit_cost = request.exit_cost
+            row.exit_cost = total_cost
             row.realized_pnl = round(realized_pnl, 2)
             row.status = "CLOSED"
             row.closed_at = now
