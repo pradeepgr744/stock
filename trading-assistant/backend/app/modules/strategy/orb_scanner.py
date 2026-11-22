@@ -10,12 +10,13 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import websockets
+from sqlalchemy import text
 from google.protobuf.json_format import MessageToDict
 from websockets.exceptions import InvalidStatus
 from upstox_client.feeder.proto import MarketDataFeedV3_pb2
 
 from ...config import settings
-from ...database import SessionLocal
+from ...database import SessionLocal, engine
 from ..market_data.upstox import Instrument, upstox_client
 from ..notifications.telegram import TelegramError, telegram_notifier
 from ..news.worker import news_worker
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 MARKET_TIMEZONE = ZoneInfo("Asia/Kolkata")
 ESTIMATED_ROUND_TRIP_COST_RATE = 0.0015
 MAX_SIGNAL_AGE_SECONDS = 120
+_SCANNER_LOCK_KEY = 724_202_613
 
 
 class OrbScannerError(Exception):
@@ -116,20 +118,49 @@ class OrbScanner:
             return dict(self._status)
 
     def _thread_main(self, keys_to_symbols: dict[str, str]) -> None:
+        lock_connection = None
+        lock_acquired = False
         try:
+            # Only one scanner may publish live alerts across Render replicas
+            # or multiple Uvicorn workers.
+            lock_connection = engine.connect()
+            if engine.dialect.name == "postgresql":
+                lock_acquired = bool(
+                    lock_connection.execute(
+                        text("SELECT pg_try_advisory_lock(:lock_key)"),
+                        {"lock_key": _SCANNER_LOCK_KEY},
+                    ).scalar()
+                )
+                if not lock_acquired:
+                    self._update_status(
+                        running=False,
+                        connection="standby",
+                        message="Another application instance currently owns the live scanner lock.",
+                    )
+                    return
             asyncio.run(self._run(keys_to_symbols))
         except Exception as error:
             logger.exception("ORB scanner stopped unexpectedly")
             self._update_status(
                 running=False,
                 connection="error",
-                message="Scanner stopped unexpectedly.",
+                message="Scanner stopped unexpectedly; live alerts are disabled.",
                 last_error=str(error),
             )
         finally:
+            if lock_connection is not None:
+                try:
+                    if lock_acquired:
+                        lock_connection.execute(
+                            text("SELECT pg_advisory_unlock(:lock_key)"),
+                            {"lock_key": _SCANNER_LOCK_KEY},
+                        )
+                except Exception:
+                    logger.exception("Could not release live scanner advisory lock")
+                lock_connection.close()
             with self._lock:
                 self._status["running"] = False
-                if self._status["connection"] != "error":
+                if self._status["connection"] not in {"error", "standby"}:
                     self._status.update(
                         connection="stopped",
                         message="Scanner is stopped.",
