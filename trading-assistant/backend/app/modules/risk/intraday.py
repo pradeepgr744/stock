@@ -74,7 +74,7 @@ class Position:
         points = mark - self.entry_price
         if self.side == "SHORT":
             points = -points
-        return points * self.quantity
+        return points * self.quantity - self.entry_cost
 
 
 @dataclass(frozen=True)
