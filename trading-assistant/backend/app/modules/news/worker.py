@@ -102,11 +102,16 @@ class NewsWorker:
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=5)
-        self._update(
-            running=False,
-            state="STOPPED",
-            message="Background news worker stopped on this application instance.",
-        )
+        # Do not overwrite the shared worker state when a non-leader API
+        # replica shuts down; another replica may still be polling.
+        with self._lock:
+            self._status.update(
+                running=False,
+                state="STOPPED",
+                halt_new_entries=True,
+                halt_all_symbols=True,
+                message="Background news worker stopped on this application instance.",
+            )
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
@@ -124,11 +129,16 @@ class NewsWorker:
                     message="News ingestion failed; new signal alerts are paused until coverage recovers.",
                 )
             self._stop_event.wait(max(60, settings.news_poll_interval_seconds))
-        self._update(
-            running=False,
-            state="STOPPED",
-            message="Background news worker stopped.",
-        )
+        # Local shutdown must not overwrite the durable state owned by another
+        # Render/Uvicorn replica.
+        with self._lock:
+            self._status.update(
+                running=False,
+                state="STOPPED",
+                halt_new_entries=True,
+                halt_all_symbols=True,
+                message="Background news worker stopped.",
+            )
 
     def run_once(self) -> dict[str, Any]:
         if not self._run_lock.acquire(blocking=False):
