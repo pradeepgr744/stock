@@ -1,8 +1,8 @@
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from app.modules.risk.intraday import IntradayRiskManager, RiskLimits
+from app.modules.risk.intraday import IntradayRiskManager, Position, RiskLimits
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -130,6 +130,22 @@ class IntradayRiskManagerTests(unittest.TestCase):
         )
         self.assertFalse(halted.allowed)
         self.assertIn("Consecutive-loss", halted.reason)
+
+
+    def test_overnight_position_requires_manual_flattening(self):
+        manager = IntradayRiskManager()
+        manager.session_date = date(2026, 11, 18)
+        manager.positions["AAA"] = Position(
+            symbol="AAA",
+            side="LONG",
+            quantity=10,
+            entry_price=100,
+            stop_price=99,
+            planned_risk=10,
+            opened_at=at(14, 0, day=17),
+        )
+        self.assertTrue(manager.must_flatten(at(10, 0, day=18)))
+        self.assertTrue(manager.halted)
 
     def test_timezone_naive_timestamp_is_rejected(self):
         with self.assertRaises(ValueError):
