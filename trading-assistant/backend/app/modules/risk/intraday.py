@@ -163,6 +163,9 @@ class IntradayRiskManager:
         local = self._ist(now)
         if not self._prepare_session(local):
             return EntryDecision(False, "Overnight position detected; new session blocked")
+        if self.consecutive_losses >= self.limits.max_consecutive_losses:
+            self.halted = True
+            return EntryDecision(False, "Consecutive-loss limit reached; trading halted for the day")
         if self.halted:
             return EntryDecision(False, "Daily risk halt is active")
         if local.time() < self.limits.entry_start:
@@ -174,9 +177,6 @@ class IntradayRiskManager:
         if self.day_pnl <= -self.limits.max_daily_loss:
             self.halted = True
             return EntryDecision(False, "Daily loss limit reached; flatten open positions")
-        if self.consecutive_losses >= self.limits.max_consecutive_losses:
-            self.halted = True
-            return EntryDecision(False, "Consecutive-loss limit reached; trading halted for the day")
         if self.last_loss_at is not None:
             elapsed = local - self._ist(self.last_loss_at)
             cooldown = timedelta(minutes=self.limits.cooldown_minutes_after_loss)
