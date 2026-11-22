@@ -239,7 +239,7 @@ class TelegramNotifierTests(unittest.TestCase):
                 }
             )
 
-        self.assertIn("LIVE ORB CANDIDATE", get.call_args.kwargs["params"]["text"])
+        self.assertIn("LIVE TRADE CANDIDATE", get.call_args.kwargs["params"]["text"])
         self.assertIn("no setup is guaranteed", get.call_args.kwargs["params"]["text"])
         self.assertIn("Reference invalidation (not an order)", get.call_args.kwargs["params"]["text"])
 
