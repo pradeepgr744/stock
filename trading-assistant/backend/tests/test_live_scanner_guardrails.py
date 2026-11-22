@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.config import settings
 from app.modules.news.worker import NewsWorker
@@ -9,11 +9,40 @@ from app.modules.strategy.orb_scanner import OrbScanner
 class NewsWorkerGuardTests(unittest.TestCase):
     def test_unconfigured_feeds_fail_closed(self):
         worker = NewsWorker()
-        with patch.object(settings, "news_rss_feed_urls", ""):
+        with (
+            patch.object(settings, "news_rss_feed_urls", ""),
+            patch("app.modules.news.worker.Base.metadata.create_all"),
+            patch("app.modules.news.worker.engine.connect") as connect,
+            patch("app.modules.news.worker.engine.dialect.name", "sqlite"),
+            patch.object(worker, "_persist_status"),
+        ):
+            connect.return_value = MagicMock()
             result = worker.run_once()
         self.assertEqual(result["state"], "UNCONFIGURED")
         self.assertTrue(result["halt_new_entries"])
         self.assertTrue(result["halt_all_symbols"])
+
+
+    def test_empty_feed_result_fails_closed_instead_of_allowing_signals(self):
+        worker = NewsWorker()
+        session = MagicMock()
+        session.__enter__.return_value = session
+        with (
+            patch.object(settings, "news_rss_feed_urls", "https://example.com/feed.xml"),
+            patch("app.modules.news.worker.Base.metadata.create_all"),
+            patch("app.modules.news.worker.engine.connect") as connect,
+            patch("app.modules.news.worker.engine.dialect.name", "sqlite"),
+            patch("app.modules.news.worker.fetch_rss_articles", return_value=([], [])),
+            patch("app.modules.news.worker.SessionLocal", return_value=session),
+            patch.object(worker, "_persist_status"),
+        ):
+            connect.return_value = MagicMock()
+            result = worker.run_once()
+
+        self.assertEqual(result["state"], "EMPTY")
+        self.assertTrue(result["halt_new_entries"])
+        self.assertTrue(result["halt_all_symbols"])
+        self.assertEqual(result["last_article_count"], 0)
 
 
 class LiveScannerGuardTests(unittest.TestCase):
