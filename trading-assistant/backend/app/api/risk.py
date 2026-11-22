@@ -7,7 +7,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, text
 
 from ..config import settings
@@ -147,7 +147,7 @@ def record_manual_entry(request: ManualTradeEntry) -> dict:
                     text("SELECT pg_advisory_xact_lock(:lock_key)"),
                     {"lock_key": _RISK_LEDGER_LOCK_KEY},
                 )
-            manager = _manager_from_session(session, now)
+            manager = build_risk_manager(session, now)
             estimated_cost = (
                 request.estimated_round_trip_cost
                 if request.estimated_round_trip_cost is not None
