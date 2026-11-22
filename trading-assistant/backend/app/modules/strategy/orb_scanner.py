@@ -279,7 +279,10 @@ class OrbScanner:
                     or heartbeat_stale
                     or news_status.get("status_store_unavailable")
                     or news_status.get("halt_all_symbols")
-                    or news_status.get("halt_new_entries")
+                    or (
+                        news_status.get("halt_new_entries")
+                        and not blocked_symbols
+                    )
                 )
                 if news_gate_active or candidate.symbol in blocked_symbols:
                     self._update_status(
