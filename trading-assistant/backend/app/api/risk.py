@@ -1,20 +1,37 @@
 from __future__ import annotations
 
 from datetime import datetime
+from secrets import compare_digest
 from typing import Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, text
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import Base, SessionLocal, engine
 from ..modules.risk.intraday import IntradayRiskManager, Position, RiskLimits
 from ..modules.risk.models import ManualTrade
 
-router = APIRouter(prefix="/api/risk", tags=["manual-risk"])
+def require_risk_api_key(x_risk_api_key: str | None = Header(default=None)) -> None:
+    expected = settings.risk_api_key.strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Manual risk journal is locked until RISK_API_KEY is configured.",
+        )
+    if not x_risk_api_key or not compare_digest(x_risk_api_key, expected):
+        raise HTTPException(status_code=401, detail="A valid X-Risk-API-Key header is required.")
+
+
+router = APIRouter(
+    prefix="/api/risk",
+    tags=["manual-risk"],
+    dependencies=[Depends(require_risk_api_key)],
+)
 IST = ZoneInfo("Asia/Kolkata")
 _RISK_LEDGER_LOCK_KEY = 724_202_612
 _ESTIMATED_ROUND_TRIP_COST_RATE = 0.0015
