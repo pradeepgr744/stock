@@ -1,11 +1,21 @@
 import unittest
+from datetime import datetime
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import risk as risk_api
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+class FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 11, 23, 10, 30, tzinfo=tz or IST)
 
 
 class ManualRiskApiTests(unittest.TestCase):
@@ -18,10 +28,13 @@ class ManualRiskApiTests(unittest.TestCase):
         self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.engine_patch = patch.object(risk_api, "engine", self.engine)
         self.session_patch = patch.object(risk_api, "SessionLocal", self.session_factory)
+        self.datetime_patch = patch.object(risk_api, "datetime", FrozenDateTime)
         self.engine_patch.start()
         self.session_patch.start()
+        self.datetime_patch.start()
 
     def tearDown(self):
+        self.datetime_patch.stop()
         self.session_patch.stop()
         self.engine_patch.stop()
         self.engine.dispose()
