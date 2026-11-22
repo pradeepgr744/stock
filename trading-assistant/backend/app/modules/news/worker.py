@@ -88,13 +88,14 @@ class NewsWorker:
                 state="STARTING",
                 message="News worker started; waiting for the database leader lock.",
             )
-            self._persist_status()
-            self._thread = threading.Thread(
+            thread = threading.Thread(
                 target=self._loop,
                 name="news-rss-worker",
                 daemon=True,
             )
-            self._thread.start()
+            self._thread = thread
+        self._persist_status()
+        thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
