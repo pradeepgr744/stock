@@ -1,9 +1,11 @@
 import unittest
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from unittest.mock import MagicMock, patch
 
 from app.config import settings
 from app.modules.news.worker import NewsWorker
-from app.modules.strategy.orb_scanner import OrbScanner
+from app.modules.strategy.orb_scanner import OrbScanner, news_gate_blocks_candidate
 
 
 class NewsWorkerGuardTests(unittest.TestCase):
@@ -52,6 +54,30 @@ class LiveScannerGuardTests(unittest.TestCase):
         self.assertEqual(quantity, 217)
         self.assertEqual(planned_risk, 249.55)
         self.assertEqual(estimated_cost, 32.55)
+
+
+    def test_issuer_news_block_is_limited_to_affected_symbol(self):
+        now = datetime(2026, 11, 23, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        status = {
+            "state": "AVAILABLE",
+            "last_heartbeat_at": now.isoformat(),
+            "halt_new_entries": True,
+            "halt_all_symbols": False,
+            "blocked_symbols": ["ABC"],
+        }
+        self.assertTrue(news_gate_blocks_candidate(status, "ABC", now))
+        self.assertFalse(news_gate_blocks_candidate(status, "RELIANCE", now))
+
+    def test_stale_news_heartbeat_blocks_every_candidate(self):
+        now = datetime(2026, 11, 23, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+        status = {
+            "state": "AVAILABLE",
+            "last_heartbeat_at": (now - timedelta(minutes=20)).isoformat(),
+            "halt_new_entries": False,
+            "halt_all_symbols": False,
+            "blocked_symbols": [],
+        }
+        self.assertTrue(news_gate_blocks_candidate(status, "RELIANCE", now))
 
     def test_daily_signal_cap_and_symbol_direction_deduplication(self):
         scanner = OrbScanner()
