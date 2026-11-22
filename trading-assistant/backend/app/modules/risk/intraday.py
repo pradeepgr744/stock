@@ -139,11 +139,16 @@ class IntradayRiskManager:
         local = self._ist(now)
         if not self._prepare_session(local):
             return True
+        overnight_position = any(
+            self._ist(position.opened_at).date() != local.date()
+            for position in self.positions.values()
+        )
         if self.positions and (
-            local.time() >= self.limits.square_off_time
+            overnight_position
+            or local.time() >= self.limits.square_off_time
             or self.day_pnl <= -self.limits.max_daily_loss
         ):
-            if self.day_pnl <= -self.limits.max_daily_loss:
+            if overnight_position or self.day_pnl <= -self.limits.max_daily_loss:
                 self.halted = True
             return True
         return False
